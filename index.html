@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SoundProspect — Analyse de marché</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --color-bg-primary: #ffffff;
+      --color-bg-secondary: #f5f5f3;
+      --color-bg-tertiary: #eeece6;
+      --color-text-primary: #1a1a18;
+      --color-text-secondary: #6b6b67;
+      --color-text-tertiary: #9e9e9a;
+      --color-border-light: rgba(0,0,0,0.10);
+      --color-border-med: rgba(0,0,0,0.18);
+      --color-accent: #1D9E75;
+      --color-accent-dark: #0F6E56;
+      --color-accent-light: #E1F5EE;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --score-high: #1D9E75;
+      --score-med: #EF9F27;
+      --score-low: #E24B4A;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --color-bg-primary: #1e1e1c;
+        --color-bg-secondary: #2a2a28;
+        --color-bg-tertiary: #141412;
+        --color-text-primary: #f0ede6;
+        --color-text-secondary: #9e9e9a;
+        --color-text-tertiary: #6b6b67;
+        --color-border-light: rgba(255,255,255,0.08);
+        --color-border-med: rgba(255,255,255,0.15);
+        --color-accent-light: #0a3d2b;
+      }
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--color-bg-tertiary);
+      color: var(--color-text-primary);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Top bar ─────────────────────────────────────────────────────────── */
+    .topbar {
+      background: var(--color-bg-primary);
+      border-bottom: 0.5px solid var(--color-border-light);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+      z-index: 100;
+    }
+
+    .logo {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--color-text-primary);
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .logo-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--color-accent);
+      flex-shrink: 0;
+    }
+
+    .search-row {
+      display: flex;
+      gap: 8px;
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .search-row input {
+      flex: 1;
+      font-size: 13px;
+      padding: 7px 10px;
+      border-radius: var(--radius-md);
+      border: 0.5px solid var(--color-border-med);
+      background: var(--color-bg-secondary);
+      color: var(--color-text-primary);
+    }
+
+    .search-row input:focus {
+      outline: none;
+      border-color: var(--color-accent);
+    }
+
+    .search-row select {
+      font-size: 13px;
+      padding: 7px 8px;
+      border-radius: var(--radius-md);
+      border: 0.5px solid var(--color-border-med);
+      background: var(--color-bg-secondary);
+      color: var(--color-text-primary);
+      cursor: pointer;
+    }
+
+    .btn-search {
+      background: var(--color-accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-md);
+      padding: 7px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+
+    .btn-search:hover { background: var(--color-accent-dark); }
+    .btn-search:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* ── Body layout ─────────────────────────────────────────────────────── */
+    .body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────────── */
+    .sidebar {
+      width: 320px;
+      flex-shrink: 0;
+      background: var(--color-bg-primary);
+      border-right: 0.5px solid var(--color-border-light);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .sidebar-head {
+      padding: 12px 14px;
+      border-bottom: 0.5px solid var(--color-border-light);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .sidebar-title {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--color-text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+
+    .count-badge {
+      background: var(--color-bg-secondary);
+      border: 0.5px solid var(--color-border-light);
+      border-radius: 20px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: var(--color-text-secondary);
+    }
+
+    .filters {
+      padding: 10px 14px;
+      border-bottom: 0.5px solid var(--color-border-light);
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+
+    .chip {
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      border: 0.5px solid var(--color-border-med);
+      color: var(--color-text-secondary);
+      cursor: pointer;
+      background: transparent;
+      transition: all 0.12s;
+    }
+
+    .chip:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+    .chip.active {
+      background: var(--color-accent-light);
+      border-color: #5DCAA5;
+      color: var(--color-accent-dark);
+    }
+
+    /* ── Prospect list ───────────────────────────────────────────────────── */
+    .prospect-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .prospect-card {
+      background: var(--color-bg-primary);
+      border: 0.5px solid var(--color-border-light);
+      border-radius: var(--radius-lg);
+      padding: 10px 12px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+      position: relative;
+    }
+
+    .prospect-card:hover { border-color: var(--color-border-med); }
+    .prospect-card.selected { border: 1.5px solid var(--color-accent); }
+
+    .card-rank {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--color-text-tertiary);
+    }
+
+    .card-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--color-text-primary);
+      margin-bottom: 2px;
+      padding-right: 28px;
+    }
+
+    .card-type {
+      font-size: 11px;
+      color: var(--color-text-secondary);
+      margin-bottom: 8px;
+    }
+
+    .score-bar-wrap {
+      height: 4px;
+      background: var(--color-bg-secondary);
+      border-radius: 2px;
+      margin-bottom: 7px;
+      overflow: hidden;
+    }
+
+    .score-bar {
+      height: 4px;
+      border-radius: 2px;
+      background: var(--score-high);
+      transition: width 0.4s ease;
+    }
+
+    .score-bar.med { background: var(--score-med); }
+    .score-bar.low { background: var(--score-low); }
+
+    .card-meta {
+      display: flex;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+
+    .meta-pill {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 10px;
+      background: var(--color-bg-secondary);
+      color: var(--color-text-secondary);
+    }
+
+    /* ── Loading / empty ─────────────────────────────────────────────────── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 260px;
+      gap: 10px;
+      color: var(--color-text-secondary);
+      font-size: 13px;
+      text-align: center;
+      padding: 20px;
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--color-border-light);
+      border-top-color: var(--color-accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Map ─────────────────────────────────────────────────────────────── */
+    .map-area {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #map-container {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Detail panel ────────────────────────────────────────────────────── */
+    .detail-panel {
+      display: none;
+      position: absolute;
+      bottom: 16px;
+      right: 16px;
+      width: 270px;
+      background: var(--color-bg-primary);
+      border: 0.5px solid var(--color-border-med);
+      border-radius: var(--radius-lg);
+      padding: 14px;
+      z-index: 1000;
+    }
+
+    .detail-panel.visible { display: block; }
+
+    .detail-close {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      background: none;
+      border: none;
+      font-size: 18px;
+      cursor: pointer;
+      color: var(--color-text-tertiary);
+      line-height: 1;
+    }
+
+    .detail-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--color-text-primary);
+      margin-bottom: 2px;
+      padding-right: 20px;
+    }
+
+    .detail-addr {
+      font-size: 11px;
+      color: var(--color-text-secondary);
+      margin-bottom: 10px;
+    }
+
+    .score-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .score-cell {
+      background: var(--color-bg-secondary);
+      border-radius: var(--radius-md);
+      padding: 7px 9px;
+    }
+
+    .score-cell-label {
+      font-size: 10px;
+      color: var(--color-text-secondary);
+      margin-bottom: 2px;
+    }
+
+    .score-cell-val {
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--color-text-primary);
+    }
+
+    .total-score-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      background: var(--color-accent-light);
+      border-radius: var(--radius-md);
+    }
+
+    .total-score-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--color-accent-dark);
+    }
+
+    .total-score-num {
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--color-accent-dark);
+    }
+
+    /* ── Legend ──────────────────────────────────────────────────────────── */
+    .legend {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      background: var(--color-bg-primary);
+      border: 0.5px solid var(--color-border-light);
+      border-radius: var(--radius-md);
+      padding: 8px 12px;
+      font-size: 11px;
+      color: var(--color-text-secondary);
+      z-index: 1000;
+      display: none;
+    }
+
+    .legend.visible { display: block; }
+
+    .legend-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .legend-row:last-child { margin-bottom: 0; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ── Responsive ──────────────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .sidebar { width: 100%; height: 50vh; border-right: none; border-bottom: 0.5px solid var(--color-border-light); }
+      .body { flex-direction: column; }
+      .map-area { height: 50vh; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="logo">
+      <span class="logo-dot"></span>
+      SoundProspect
+    </div>
+    <div class="search-row">
+      <input type="text" id="city-input" placeholder="Ville ou quartier (ex: Ixelles, Liège centre...)" />
+      <select id="radius-sel">
+        <option value="500">500 m</option>
+        <option value="1000">1 km</option>
+        <option value="2000" selected>2 km</option>
+        <option value="5000">5 km</option>
+      </select>
+      <button class="btn-search" id="btn-search" onclick="runSearch()">Analyser</button>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="body">
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-head">
+        <span class="sidebar-title">Prospects</span>
+        <span class="count-badge" id="count-badge">—</span>
+      </div>
+      <div class="filters">
+        <button class="chip active" onclick="filterType(this,'all')">Tous</button>
+        <button class="chip" onclick="filterType(this,'horeca')">Horeca</button>
+        <button class="chip" onclick="filterType(this,'commerce')">Commerces</button>
+        <button class="chip" onclick="filterType(this,'other')">Autres</button>
+      </div>
+      <div class="prospect-list" id="prospect-list">
+        <div class="empty-state">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          Entrer une ville ou un quartier pour démarrer
+        </div>
+      </div>
+    </div>
+
+    <!-- Map -->
+    <div class="map-area">
+      <div id="map-container"></div>
+
+      <!-- Legend -->
+      <div class="legend" id="legend">
+        <div class="legend-row"><div class="legend-dot" style="background:#1D9E75"></div> Score ≥ 70 — Prioritaire</div>
+        <div class="legend-row"><div class="legend-dot" style="background:#EF9F27"></div> Score 45–69 — Intéressant</div>
+        <div class="legend-row"><div class="legend-dot" style="background:#E24B4A"></div> Score &lt; 45 — Faible potentiel</div>
+      </div>
+
+      <!-- Detail panel -->
+      <div class="detail-panel" id="detail-panel">
+        <button class="detail-close" onclick="closeDetail()">×</button>
+        <div class="detail-name" id="dp-name"></div>
+        <div class="detail-addr" id="dp-addr"></div>
+        <div class="score-grid">
+          <div class="score-cell">
+            <div class="score-cell-label">Surface estimée</div>
+            <div class="score-cell-val" id="dp-surface">—</div>
+          </div>
+          <div class="score-cell">
+            <div class="score-cell-label">Score secteur</div>
+            <div class="score-cell-val" id="dp-sector">—</div>
+          </div>
+          <div class="score-cell">
+            <div class="score-cell-label">Prob. musique</div>
+            <div class="score-cell-val" id="dp-music">—</div>
+          </div>
+          <div class="score-cell">
+            <div class="score-cell-label">Distance</div>
+            <div class="score-cell-val" id="dp-dist">—</div>
+          </div>
+        </div>
+        <div class="total-score-row">
+          <span class="total-score-label">Score prospect</span>
+          <span class="total-score-num" id="dp-score">—</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script>
+    // ─── State ─────────────────────────────────────────────────────────────────
+    let map = null;
+    let allProspects = [];
+    let activeFilter = 'all';
+    let radiusCircle = null;
+    let markers = [];
+
+    // ─── Data tables ───────────────────────────────────────────────────────────
+    const SECTOR_SCORES = {
+      bar: 100, pub: 100, restaurant: 90, cafe: 85, nightclub: 100,
+      fast_food: 75, ice_cream: 70,
+      clothes: 70, shoes: 65, hairdresser: 80, beauty: 80,
+      mall: 90, supermarket: 65, bakery: 65,
+      sports: 60, fitness: 75,
+      hotel: 85, hostel: 75, guest_house: 60,
+      office: 30, school: 20, hospital: 15, pharmacy: 20, bank: 20
+    };
+
+    const MUSIC_PROB = {
+      bar: 95, pub: 95, nightclub: 99, restaurant: 80, cafe: 75,
+      fast_food: 60, ice_cream: 50,
+      clothes: 85, shoes: 80, hairdresser: 90, beauty: 90,
+      fitness: 80, hotel: 75, hostel: 70,
+      sports: 65, mall: 85, supermarket: 55, bakery: 40,
+      office: 20, school: 15, hospital: 5, pharmacy: 10, bank: 5
+    };
+
+    const TYPE_LABELS = {
+      bar: 'Bar', pub: 'Pub', restaurant: 'Restaurant', cafe: 'Café',
+      nightclub: 'Boîte de nuit', fast_food: 'Fast-food', ice_cream: 'Glacier',
+      clothes: 'Vêtements', shoes: 'Chaussures', hairdresser: 'Coiffeur',
+      beauty: 'Institut beauté', mall: 'Centre commercial',
+      supermarket: 'Supermarché', bakery: 'Boulangerie',
+      sports: 'Sport', fitness: 'Fitness',
+      hotel: 'Hôtel', hostel: 'Auberge', guest_house: 'Chambre d\'hôte',
+      office: 'Bureau', school: 'École', hospital: 'Hôpital',
+      pharmacy: 'Pharmacie', bank: 'Banque'
+    };
+
+    const HORECA = new Set(['bar','pub','restaurant','cafe','nightclub','fast_food','ice_cream','hotel','hostel','guest_house']);
+    const COMMERCE = new Set(['clothes','shoes','hairdresser','beauty','mall','supermarket','bakery','sports','fitness']);
+
+    // ─── Helpers ───────────────────────────────────────────────────────────────
+    function getTypeGroup(amenity, shop) {
+      const t = amenity || shop;
+      if (HORECA.has(t)) return 'horeca';
+      if (COMMERCE.has(t)) return 'commerce';
+      return 'other';
+    }
+
+    function computeScore({ amenity, shop, area }) {
+      const surfaceScore = Math.min(100, area ? Math.round(area / 5) : 40);
+      const sectorScore = SECTOR_SCORES[amenity] || SECTOR_SCORES[shop] || 30;
+      const musicScore  = MUSIC_PROB[amenity]   || MUSIC_PROB[shop]   || 25;
+      const total = Math.round(surfaceScore * 0.25 + sectorScore * 0.40 + musicScore * 0.35);
+      return { total, surfaceScore, sectorScore, musicScore };
+    }
+
+    function scoreColor(s) {
+      if (s >= 70) return '#1D9E75';
+      if (s >= 45) return '#EF9F27';
+      return '#E24B4A';
+    }
+
+    function barClass(s) {
+      if (s >= 70) return '';
+      if (s >= 45) return 'med';
+      return 'low';
+    }
+
+    function haversine(lat1, lon1, lat2, lon2) {
+      const R = 6371000;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat/2)**2 +
+                Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dLon/2)**2;
+      return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+    }
+
+    // ─── Map init ──────────────────────────────────────────────────────────────
+    function initMap(lat, lon) {
+      if (!map) {
+        map = L.map('map-container').setView([lat, lon], 15);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+          maxZoom: 19
+        }).addTo(map);
+      } else {
+        map.setView([lat, lon], 15);
+      }
+    }
+
+    function clearMarkers() {
+      markers.forEach(m => map && map.removeLayer(m));
+      markers = [];
+      if (radiusCircle && map) { map.removeLayer(radiusCircle); radiusCircle = null; }
+    }
+
+    // ─── API calls ─────────────────────────────────────────────────────────────
+    async function geocode(city) {
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=json&limit=1`;
+      const r = await fetch(url, { headers: { 'Accept-Language': 'fr', 'User-Agent': 'SoundProspect/1.0' } });
+      const d = await r.json();
+      if (!d.length) return null;
+      return { lat: parseFloat(d[0].lat), lon: parseFloat(d[0].lon) };
+    }
+
+    async function fetchPlaces(lat, lon, radius) {
+      const r = parseInt(radius);
+      const query = `[out:json][timeout:30];
+(
+  node["amenity"~"bar|pub|restaurant|cafe|nightclub|fast_food|ice_cream|hotel|hostel|guest_house|school|hospital|pharmacy|bank"](around:${r},${lat},${lon});
+  node["shop"~"clothes|shoes|hairdresser|beauty|mall|supermarket|bakery|sports|fitness"](around:${r},${lat},${lon});
+  way["amenity"~"bar|pub|restaurant|cafe|nightclub|fast_food|ice_cream|hotel|hostel|guest_house"](around:${r},${lat},${lon});
+  way["shop"~"clothes|shoes|hairdresser|beauty|mall|supermarket|bakery|sports|fitness"](around:${r},${lat},${lon});
+);
+out center tags;`;
+      const resp = await fetch('https://overpass-api.de/api/interpreter', {
+        method: 'POST',
+        body: 'data=' + encodeURIComponent(query)
+      });
+      const data = await resp.json();
+      return data.elements || [];
+    }
+
+    // ─── Render ────────────────────────────────────────────────────────────────
+    function renderList(prospects) {
+      const filtered = activeFilter === 'all'
+        ? prospects
+        : prospects.filter(p => p.group === activeFilter);
+      document.getElementById('count-badge').textContent = filtered.length;
+      const list = document.getElementById('prospect-list');
+      if (!filtered.length) {
+        list.innerHTML = '<div class="empty-state">Aucun résultat pour ce filtre</div>';
+        return;
+      }
+      list.innerHTML = filtered.map((p, i) => `
+        <div class="prospect-card${p.selected ? ' selected' : ''}" onclick="selectProspect(${p._idx})">
+          <span class="card-rank">#${i + 1}</span>
+          <div class="card-name">${p.name || '(sans nom)'}</div>
+          <div class="card-type">${TYPE_LABELS[p.amenity] || TYPE_LABELS[p.shop] || p.amenity || p.shop || '—'}</div>
+          <div class="score-bar-wrap">
+            <div class="score-bar ${barClass(p.scores.total)}" style="width:${p.scores.total}%"></div>
+          </div>
+          <div class="card-meta">
+            <span class="meta-pill">Score ${p.scores.total}/100</span>
+            <span class="meta-pill">${p.dist} m</span>
+            <span class="meta-pill">Musique ${p.scores.musicScore}%</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function selectProspect(idx) {
+      allProspects.forEach(p => p.selected = false);
+      const p = allProspects[idx];
+      p.selected = true;
+      renderList(allProspects);
+      const dp = document.getElementById('detail-panel');
+      dp.classList.add('visible');
+      document.getElementById('dp-name').textContent   = p.name || '(sans nom)';
+      document.getElementById('dp-addr').textContent   = p.address || (TYPE_LABELS[p.amenity] || TYPE_LABELS[p.shop] || '');
+      document.getElementById('dp-surface').textContent = p.area ? p.area + ' m²' : 'N/D';
+      document.getElementById('dp-sector').textContent  = p.scores.sectorScore + '/100';
+      document.getElementById('dp-music').textContent   = p.scores.musicScore + '%';
+      document.getElementById('dp-dist').textContent    = p.dist + ' m';
+      document.getElementById('dp-score').textContent   = p.scores.total + '/100';
+      if (map) map.setView([p.lat, p.lon], 17);
+    }
+
+    function closeDetail() {
+      document.getElementById('detail-panel').classList.remove('visible');
+      allProspects.forEach(p => p.selected = false);
+      renderList(allProspects);
+    }
+
+    function filterType(btn, type) {
+      activeFilter = type;
+      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      renderList(allProspects);
+    }
+
+    // ─── Main search ───────────────────────────────────────────────────────────
+    async function runSearch() {
+      const city   = document.getElementById('city-input').value.trim();
+      const radius = document.getElementById('radius-sel').value;
+      if (!city) return;
+
+      const btn = document.getElementById('btn-search');
+      btn.disabled = true;
+      btn.textContent = '...';
+      document.getElementById('prospect-list').innerHTML =
+        '<div class="empty-state"><div class="spinner"></div>Recherche en cours…</div>';
+      document.getElementById('count-badge').textContent = '...';
+      closeDetail();
+
+      try {
+        const geo = await geocode(city);
+        if (!geo) {
+          document.getElementById('prospect-list').innerHTML =
+            '<div class="empty-state">Ville introuvable. Essaie un nom plus précis.</div>';
+          return;
+        }
+
+        initMap(geo.lat, geo.lon);
+        clearMarkers();
+
+        radiusCircle = L.circle([geo.lat, geo.lon], {
+          radius: parseInt(radius),
+          color: '#1D9E75', fillColor: '#1D9E75', fillOpacity: 0.07, weight: 1.5
+        }).addTo(map);
+
+        L.marker([geo.lat, geo.lon], {
+          icon: L.divIcon({
+            className: '',
+            html: '<div style="width:12px;height:12px;border-radius:50%;background:#1D9E75;border:2px solid white;"></div>',
+            iconSize: [12, 12], iconAnchor: [6, 6]
+          })
+        }).addTo(map);
+
+        const elements = await fetchPlaces(geo.lat, geo.lon, radius);
+
+        allProspects = elements.map((el, i) => {
+          const lat = el.lat || el.center?.lat;
+          const lon = el.lon || el.center?.lon;
+          if (!lat || !lon) return null;
+          const amenity = el.tags?.amenity || '';
+          const shop    = el.tags?.shop    || '';
+          const area    = el.tags?.['building:area'] ? parseInt(el.tags['building:area']) : null;
+          const scores  = computeScore({ amenity, shop, area });
+          const dist    = haversine(geo.lat, geo.lon, lat, lon);
+          return {
+            _idx: i,
+            lat, lon,
+            name: el.tags?.name || el.tags?.['name:fr'] || '',
+            amenity, shop, area,
+            address: el.tags?.['addr:street']
+              ? `${el.tags['addr:housenumber'] || ''} ${el.tags['addr:street']}`.trim()
+              : '',
+            scores, dist,
+            group: getTypeGroup(amenity, shop),
+            selected: false
+          };
+        }).filter(Boolean);
+
+        allProspects.sort((a, b) => b.scores.total - a.scores.total);
+        allProspects.forEach((p, i) => { p._idx = i; });
+
+        // Add map markers
+        allProspects.forEach(p => {
+          const color = scoreColor(p.scores.total);
+          const m = L.marker([p.lat, p.lon], {
+            icon: L.divIcon({
+              className: '',
+              html: `<div style="width:10px;height:10px;border-radius:50%;background:${color};border:1.5px solid white;cursor:pointer;" title="${p.name || ''}"></div>`,
+              iconSize: [10, 10], iconAnchor: [5, 5]
+            })
+          });
+          m.on('click', () => selectProspect(p._idx));
+          m.addTo(map);
+          markers.push(m);
+        });
+
+        map.fitBounds(radiusCircle.getBounds(), { padding: [20, 20] });
+        document.getElementById('legend').classList.add('visible');
+        renderList(allProspects);
+
+      } catch (err) {
+        console.error(err);
+        document.getElementById('prospect-list').innerHTML =
+          '<div class="empty-state">Erreur lors du chargement. Vérifie ta connexion et réessaie.</div>';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Analyser';
+      }
+    }
+
+    // Enter key on input
+    document.getElementById('city-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') runSearch();
+    });
+  </script>
+</body>
+</html>
