@@ -119,8 +119,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .ville-card-actions{display:flex;gap:8px}
 .btn-email{flex:1;background:var(--green);color:#fff;border:none;border-radius:var(--radius-md);padding:9px 14px;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.2s}
 .btn-email:hover{background:var(--green-dark)}
-.btn-maps{background:transparent;color:var(--gray-600);border:1.5px solid var(--gray-200);border-radius:var(--radius-md);padding:9px 12px;font-size:12px;cursor:pointer;transition:all 0.2s;text-decoration:none;display:inline-flex;align-items:center;gap:4px}
-.btn-maps:hover{border-color:var(--gray-400)}
+
+.btn-find-email{background:var(--gray-100);color:var(--gray-600);border:1.5px solid var(--gray-200);border-radius:var(--radius-md);padding:9px 12px;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.2s}
+.btn-find-email:hover{background:var(--green-light);border-color:var(--green-mid);color:var(--green-dark)}
+.btn-find-email:disabled{opacity:0.6;cursor:not-allowed}
+.email-found{background:#DCFCE7;color:#166534;font-size:11px;padding:3px 8px;border-radius:8px;font-weight:600}
 .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:10px;color:var(--gray-400);font-size:13px;text-align:center;padding:40px}
 
 /* EMAIL MODAL */
@@ -250,8 +253,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="btn-cancel" onclick="closeEmailModal()">Annuler</button>
       <button class="btn-regen" onclick="regenEmail()">🔄 Régénérer</button>
       <button class="btn-send-gmail" onclick="openGmail()">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
-        Ouvrir dans Gmail
+💾 Sauvegarder en brouillon
       </button>
     </div>
   </div>
@@ -425,8 +427,9 @@ function renderVilleList(){
         ${!p.phone&&!p.email&&!p.website?'<div style="color:var(--gray-400);font-size:11px">Contacts non disponibles sur OSM</div>':''}
       </div>
       <div class="ville-card-actions">
-        <button class="btn-email" onclick="openEmailModal(villeProspects[${i}])">📧 Générer email</button>
-        <a class="btn-maps" href="https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}" target="_blank">🗺️ Maps</a>
+        <button class="btn-find-email" id="find-btn-${i}" onclick="findEmail(${i})">🔍 Trouver email</button>
+        <button class="btn-email" onclick="openEmailModal(villeProspects[${i}])">📧 Email</button>
+
       </div>
     </div>`;
   }).join('');
@@ -471,7 +474,7 @@ function openGmail(){
   const to=encodeURIComponent(document.getElementById('email-to').value||'');
   const subject=encodeURIComponent(document.getElementById('email-subject').value);
   const body=encodeURIComponent(document.getElementById('email-body').value);
-  window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${body}`,'_blank');
+  window.open(`https://mail.google.com/mail/u/info%40moodstreamai.com/?view=cm&fs=1&to=${to}&su=${subject}&body=${body}`,'_blank');
 }
 
 function closeEmailModal(){document.getElementById('email-modal-overlay').classList.remove('open');currentEmailProspect=null;}
@@ -489,6 +492,42 @@ function setProgress(pct,msg){document.getElementById('progress-panel').classLis
 function hideProgress(){document.getElementById('progress-panel').classList.remove('show');document.getElementById('progress-bar').style.width='0%';}
 
 document.getElementById('city-input').addEventListener('keydown',e=>{if(e.key==='Enter')runSearch();});
+
+async function findEmail(idx){
+  const p=villeProspects[idx];
+  const btn=document.getElementById(`find-btn-${idx}`);
+  if(!btn)return;
+  btn.disabled=true;btn.textContent='🔄 Recherche...';
+  try{
+    const result=await callClaude('find_email',{prospect:{name:p.name,typePrecise:p.typePrecise||p.type,address:p.address,city:p.city,website:p.website}});
+    if(result.email){
+      p.email=result.email;
+      if(result.website&&!p.website)p.website=result.website;
+      if(result.phone&&!p.phone)p.phone=result.phone;
+      p.emailSource=result.source;
+      p.emailConfidence=result.confidence;
+      btn.textContent='✅ Email trouvé';
+      btn.style.background='#DCFCE7';btn.style.color='#166534';btn.style.borderColor='#86EFAC';
+      // Refresh the contact section
+      const contactDiv=btn.closest('.ville-card').querySelector('.ville-card-contact');
+      if(contactDiv){
+        let html='';
+        if(p.phone)html+=`<div class="contact-row"><span>📞</span><span>${p.phone}</span></div>`;
+        if(p.email)html+=`<div class="contact-row"><span>📧</span><a href="mailto:${p.email}" style="color:var(--green)">${p.email}</a> <span class="email-found">${result.source||''}</span></div>`;
+        if(p.website)html+=`<div class="contact-row"><span>🌐</span><a href="${p.website.startsWith('http')?p.website:'https://'+p.website}" target="_blank" style="color:var(--green)">${p.website.replace(/https?:\/\//,'').split('/')[0]}</a></div>`;
+        if(!html)html='<div style="color:var(--gray-400);font-size:11px">Aucun email trouvé</div>';
+        contactDiv.innerHTML=html;
+      }
+    }else{
+      btn.textContent='❌ Non trouvé';
+      btn.style.background='#FEE2E2';btn.style.color='#991B1B';btn.style.borderColor='#FECACA';
+      setTimeout(()=>{btn.textContent='🔍 Réessayer';btn.disabled=false;btn.style='';},3000);
+    }
+  }catch(e){
+    btn.textContent='⚠️ Erreur';btn.disabled=false;
+    console.error(e);
+  }
+}
 </script>
 </body>
 </html>
