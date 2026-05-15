@@ -20,17 +20,14 @@ Type : ${p.typePrecise || p.type || ''}
 Adresse : ${p.address || ''}, ${p.city || 'Belgique'}
 Site web connu : ${p.website || 'Non disponible'}
 
-Effectue des recherches sur Google, le site web de l'établissement, Facebook, Instagram, Pages Jaunes, TripAdvisor.
+Effectue des recherches sur Google, le site web de l'établissement, Facebook, Instagram, Pages Jaunes.
 Cherche "email contact ${p.name}", "${p.name} ${p.city} contact", page Facebook, etc.
 
-Une fois les recherches effectuées, retourne UNIQUEMENT du JSON valide sans markdown ni texte autour :
-{"email":"adresse@email.be","source":"site web / Facebook / Google / Pages Jaunes","website":"https://...","phone":"+32...","confidence":"haute / moyenne / faible"}
-Si aucun email trouvé, mets null pour email.`;
+Retourne un objet JSON avec ces champs : email (string ou null), source (string), website (string ou null), phone (string ou null), confidence (haute/moyenne/faible).`;
 
-      // Agentic loop - handle multiple tool use turns
       let messages = [{ role: 'user', content: searchPrompt }];
-      let finalResult = { email: null, source: null };
-      let maxTurns = 5;
+      let finalResult = { email: null, source: null, website: null, phone: null, confidence: 'faible' };
+      let maxTurns = 6;
 
       while (maxTurns > 0) {
         maxTurns--;
@@ -51,36 +48,67 @@ Si aucun email trouvé, mets null pour email.`;
         });
 
         const result = await response.json();
+
         if (result.error) {
           return { statusCode: 400, body: JSON.stringify({ error: result.error.message }) };
         }
 
-        // Add assistant response to messages
         messages.push({ role: 'assistant', content: result.content });
 
-        // Check stop reason
         if (result.stop_reason === 'end_turn') {
-          // Extract final text block
-          const textBlock = result.content.find(b => b.type === 'text');
-          if (textBlock) {
-            const clean = textBlock.text.replace(/```json|```/g, '').trim();
-            const jsonMatch = clean.match(/\{[\s\S]*\}/);
+          // Extract text and parse JSON from it
+          const textBlocks = result.content.filter(b => b.type === 'text');
+          for (const block of textBlocks) {
+            const text = block.text || '';
+            // Try to extract JSON object
+            const jsonMatch = text.match(/\{[^{}]*"email"[^{}]*\}/s) || text.match(/\{[\s\S]*?\}/);
             if (jsonMatch) {
-              try { finalResult = JSON.parse(jsonMatch[0]); } catch(e) {}
+              try {
+                const parsed = JSON.parse(jsonMatch[0]);
+                if (parsed && typeof parsed === 'object') {
+                  finalResult = {
+                    email: parsed.email || null,
+                    source: parsed.source || null,
+                    website: parsed.website || null,
+                    phone: parsed.phone || null,
+                    confidence: parsed.confidence || 'moyenne'
+                  };
+                  break;
+                }
+              } catch(e) {
+                // Try to extract email directly from text
+                const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+                if (emailMatch) {
+                  finalResult.email = emailMatch[0];
+                  finalResult.source = 'recherche web';
+                  finalResult.confidence = 'moyenne';
+                }
+              }
+            } else {
+              // No JSON, try direct email extraction from text
+              const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+              if (emailMatch) {
+                finalResult.email = emailMatch[0];
+                finalResult.source = 'recherche web';
+                finalResult.confidence = 'moyenne';
+              }
             }
           }
           break;
         }
 
-        // If tool_use, process tool results and continue
         if (result.stop_reason === 'tool_use') {
           const toolUseBlocks = result.content.filter(b => b.type === 'tool_use');
           const toolResults = toolUseBlocks.map(block => ({
             type: 'tool_result',
             tool_use_id: block.id,
-            content: block.type === 'tool_use' ? (block.content || '') : ''
+            content: typeof block.content === 'string' ? block.content : JSON.stringify(block.content || '')
           }));
-          messages.push({ role: 'user', content: toolResults });
+          if (toolResults.length > 0) {
+            messages.push({ role: 'user', content: toolResults });
+          } else {
+            break;
+          }
         } else {
           break;
         }
@@ -95,18 +123,10 @@ Si aucun email trouvé, mets null pour email.`;
 
     // ── SCORE prospects via Claude Haiku ───────────────────────────────────
     if (action === 'score') {
-      const prompt = `Tu es un expert en développement commercial pour Moodstream.ai, solution de diffusion musicale B2B.
-
-Analyse ces prospects et attribue un score de 0 à 100 basé sur :
-- Surface (plus c'est grand = mieux, max 40 pts)
-- Secteur (horeca et commerces = priorité, max 35 pts)
-- Probabilité de diffusion musicale (max 25 pts)
-
-Prospects :
-${JSON.stringify(data.prospects)}
-
-Réponds UNIQUEMENT en JSON valide :
-{"scores":[{"id":"id","score":85,"score_surface":30,"score_secteur":35,"score_musique":20,"type_precise":"Restaurant gastronomique","surface_estimee":"150 m²","potentiel":"Élevé","raison":"courte explication"}]}`;
+      const prompt = `Tu es un expert en développement commercial pour Moodstream.ai.
+Analyse ces prospects et attribue un score de 0 à 100.
+Prospects : ${JSON.stringify(data.prospects)}
+Réponds UNIQUEMENT en JSON : {"scores":[{"id":"id","score":85,"score_surface":30,"score_secteur":35,"score_musique":20,"type_precise":"Restaurant gastronomique","surface_estimee":"150 m²","potentiel":"Élevé","raison":"explication courte"}]}`;
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -122,15 +142,9 @@ Réponds UNIQUEMENT en JSON valide :
 
     // ── ENRICH prospects via Claude Haiku ──────────────────────────────────
     if (action === 'enrich') {
-      const prompt = `Tu es un expert en développement commercial pour Moodstream.ai, solution de diffusion musicale B2B.
-
-Pour chaque établissement, analyse et enrichis les données.
-
-Établissements :
-${JSON.stringify(data.prospects)}
-
-Réponds UNIQUEMENT en JSON valide :
-{"prospects":[{"id":"id","nom":"Nom","type_precise":"Type précis","secteur":"horeca|commerce|bienetre|sante|hotel|parking|sport|autre","surface_estimee":"~80 m²","score":78,"potentiel_musical":"Élevé|Moyen|Faible","raison_contact":"Raison courte","accroche":"Accroche personnalisée pour l'email"}]}`;
+      const prompt = `Tu es un expert en développement commercial pour Moodstream.ai.
+Enrichis ces établissements : ${JSON.stringify(data.prospects)}
+Réponds UNIQUEMENT en JSON : {"prospects":[{"id":"id","nom":"Nom","type_precise":"Type précis","secteur":"horeca|commerce|bienetre|sante|hotel|parking|sport|autre","surface_estimee":"~80 m²","score":78,"potentiel_musical":"Élevé|Moyen|Faible","raison_contact":"Raison courte","accroche":"Accroche email personnalisée"}]}`;
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -147,30 +161,19 @@ Réponds UNIQUEMENT en JSON valide :
     // ── GENERATE EMAIL via Claude Haiku ────────────────────────────────────
     if (action === 'email') {
       const p = data.prospect;
-      const prompt = `Tu es expert en développement commercial pour Moodstream.ai, solution de diffusion musicale B2B.
-
-Rédige un email de prospection :
-- Chaleureux, jamais intrusif, court (max 150 mots)
-- Personnalisé avec le nom/type de l'établissement
-- Mentionner l'adaptation automatique aux moments de la journée
+      const prompt = `Rédige un email de prospection pour Moodstream.ai (diffusion musicale B2B) :
+- Chaleureux, court (max 150 mots), personnalisé
+- Mentionner adaptation automatique aux moments de la journée
 - Musiques 100% libres de droits, suppression redevances UNISONO
 - Essai gratuit 14 jours sans engagement
-- CTA : devis sur moodstreamai.com/demande-de-devis
+- CTA : moodstreamai.com/demande-de-devis
 
 Établissement : ${p.name || p.typePrecise || 'Établissement'}
 Type : ${p.typePrecise || p.type || ''}
 Surface : ${p.surfaceEstimee || 'non connue'}
 Accroche : ${p.accroche || ''}
 
-Modèle :
-"OBJET: [Nom] mérite une ambiance à son image
-Bonjour,
-Dans [type établissement], l'ambiance sonore compte autant que [élément clé]. Moodstream.ai propose une programmation musicale qui s'adapte automatiquement à vos moments de la journée.
-Le tout avec des musiques 100% libres de droits, pour supprimer les redevances UNISONO.
-Essayez gratuitement 14 jours — sans engagement.
-Devis sur moodstreamai.com/demande-de-devis ou répondez à cet email."
-
-Réponds UNIQUEMENT en JSON : {"objet":"sujet","corps":"corps complet"}`;
+Réponds UNIQUEMENT en JSON : {"objet":"sujet","corps":"corps complet de l'email"}`;
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
