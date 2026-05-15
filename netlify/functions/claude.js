@@ -14,110 +14,116 @@ exports.handler = async (event) => {
     // ── FIND EMAIL via Claude Sonnet + Web Search ──────────────────────────
     if (action === 'find_email') {
       const p = data.prospect;
-      const searchPrompt = `Trouve l'adresse email de contact de cet établissement commercial :
-Nom : ${p.name || 'Inconnu'}
-Type : ${p.typePrecise || p.type || ''}
-Adresse : ${p.address || ''}, ${p.city || 'Belgique'}
-Site web connu : ${p.website || 'Non disponible'}
 
-Effectue des recherches sur Google, le site web de l'établissement, Facebook, Instagram, Pages Jaunes.
-Cherche "email contact ${p.name}", "${p.name} ${p.city} contact", page Facebook, etc.
+      const searchPrompt = `Search for the contact email address of this business:
+Name: ${p.name || 'Unknown'}
+Type: ${p.typePrecise || p.type || ''}
+Address: ${p.address || ''}, ${p.city || 'Belgium'}
+Known website: ${p.website || 'Not available'}
 
-Retourne un objet JSON avec ces champs : email (string ou null), source (string), website (string ou null), phone (string ou null), confidence (haute/moyenne/faible).`;
+Search Google, the business website, Facebook, Instagram, Yellow Pages, TripAdvisor.
+Look for their contact email, phone number, and website.
 
-      let messages = [{ role: 'user', content: searchPrompt }];
-      let finalResult = { email: null, source: null, website: null, phone: null, confidence: 'faible' };
-      let maxTurns = 6;
+After searching, respond with ONLY a JSON object (no markdown, no explanation):
+{"email":"address@email.be","source":"website/Facebook/Google","website":"https://...","phone":"+32...","confidence":"high/medium/low"}
+Use null for fields not found.`;
 
-      while (maxTurns > 0) {
-        maxTurns--;
+      // Use streaming=false, betas for web search
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'web-search-2025-03-05'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1024,
+          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+          messages: [{ role: 'user', content: searchPrompt }]
+        })
+      });
 
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01'
-          },
-          body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 2048,
-            tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-            messages
-          })
-        });
+      const result = await response.json();
 
-        const result = await response.json();
+      if (result.error) {
+        return { statusCode: 400, body: JSON.stringify({ error: result.error.message }) };
+      }
 
-        if (result.error) {
-          return { statusCode: 400, body: JSON.stringify({ error: result.error.message }) };
-        }
+      // Extract all text from response content blocks
+      let allText = '';
+      let foundEmail = null;
+      let foundPhone = null;
+      let foundWebsite = null;
+      let foundSource = null;
+      let foundConfidence = 'medium';
 
-        messages.push({ role: 'assistant', content: result.content });
-
-        if (result.stop_reason === 'end_turn') {
-          // Extract text and parse JSON from it
-          const textBlocks = result.content.filter(b => b.type === 'text');
-          for (const block of textBlocks) {
-            const text = block.text || '';
-            // Try to extract JSON object
-            const jsonMatch = text.match(/\{[^{}]*"email"[^{}]*\}/s) || text.match(/\{[\s\S]*?\}/);
-            if (jsonMatch) {
-              try {
-                const parsed = JSON.parse(jsonMatch[0]);
-                if (parsed && typeof parsed === 'object') {
-                  finalResult = {
-                    email: parsed.email || null,
-                    source: parsed.source || null,
-                    website: parsed.website || null,
-                    phone: parsed.phone || null,
-                    confidence: parsed.confidence || 'moyenne'
-                  };
-                  break;
-                }
-              } catch(e) {
-                // Try to extract email directly from text
-                const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-                if (emailMatch) {
-                  finalResult.email = emailMatch[0];
-                  finalResult.source = 'recherche web';
-                  finalResult.confidence = 'moyenne';
-                }
-              }
-            } else {
-              // No JSON, try direct email extraction from text
-              const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-              if (emailMatch) {
-                finalResult.email = emailMatch[0];
-                finalResult.source = 'recherche web';
-                finalResult.confidence = 'moyenne';
-              }
-            }
+      if (result.content && Array.isArray(result.content)) {
+        for (const block of result.content) {
+          if (block.type === 'text') {
+            allText += block.text + '\n';
           }
-          break;
-        }
-
-        if (result.stop_reason === 'tool_use') {
-          const toolUseBlocks = result.content.filter(b => b.type === 'tool_use');
-          const toolResults = toolUseBlocks.map(block => ({
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: typeof block.content === 'string' ? block.content : JSON.stringify(block.content || '')
-          }));
-          if (toolResults.length > 0) {
-            messages.push({ role: 'user', content: toolResults });
-          } else {
-            break;
+          // web_search_result blocks contain the actual search results
+          if (block.type === 'web_search_tool_result' || block.type === 'tool_result') {
+            const content = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+            allText += content + '\n';
           }
-        } else {
-          break;
+        }
+      }
+
+      // Try to parse JSON from the text
+      const jsonMatch = allText.match(/\{\s*"email"[\s\S]*?\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          foundEmail = parsed.email || null;
+          foundPhone = parsed.phone || null;
+          foundWebsite = parsed.website || null;
+          foundSource = parsed.source || null;
+          foundConfidence = parsed.confidence || 'medium';
+        } catch(e) {}
+      }
+
+      // Fallback: extract email with regex from all text
+      if (!foundEmail) {
+        const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+        const emails = allText.match(emailRegex);
+        if (emails) {
+          // Filter out anthropic/system emails
+          const validEmails = emails.filter(e =>
+            !e.includes('anthropic') &&
+            !e.includes('example') &&
+            !e.includes('test@') &&
+            !e.includes('@email.be') // placeholder
+          );
+          if (validEmails.length > 0) {
+            foundEmail = validEmails[0];
+            foundSource = 'recherche web';
+            foundConfidence = 'medium';
+          }
+        }
+      }
+
+      // Extract phone if not found
+      if (!foundPhone) {
+        const phoneRegex = /(\+32|0032|04|02|03|04|09|010|011|012|013|014|015|016|017|018|019)[\s.\-]?[0-9]{2,3}[\s.\-]?[0-9]{2,3}[\s.\-]?[0-9]{2,3}/g;
+        const phones = allText.match(phoneRegex);
+        if (phones && phones.length > 0) {
+          foundPhone = phones[0];
         }
       }
 
       return {
         statusCode: 200,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(finalResult)
+        body: JSON.stringify({
+          email: foundEmail,
+          phone: foundPhone,
+          website: foundWebsite,
+          source: foundSource,
+          confidence: foundConfidence
+        })
       };
     }
 
@@ -163,7 +169,7 @@ Réponds UNIQUEMENT en JSON : {"prospects":[{"id":"id","nom":"Nom","type_precise
       const p = data.prospect;
       const prompt = `Rédige un email de prospection pour Moodstream.ai (diffusion musicale B2B) :
 - Chaleureux, court (max 150 mots), personnalisé
-- Mentionner adaptation automatique aux moments de la journée
+- Adaptation automatique aux moments de la journée
 - Musiques 100% libres de droits, suppression redevances UNISONO
 - Essai gratuit 14 jours sans engagement
 - CTA : moodstreamai.com/demande-de-devis
