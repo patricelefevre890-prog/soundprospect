@@ -1,3 +1,5 @@
+const fetch = require('node-fetch');
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
@@ -11,128 +13,118 @@ exports.handler = async (event) => {
   try {
     const { action, data } = JSON.parse(event.body);
 
-    // ── FIND EMAIL via Claude Sonnet + Web Search ──────────────────────────
+    // ── FIND EMAIL: fetch website + Claude extract ─────────────────────────
     if (action === 'find_email') {
       const p = data.prospect;
+      const name = p.name || '';
+      const city = p.city || 'Belgique';
+      const type = p.typePrecise || p.type || '';
+      const address = p.address || '';
 
-      const searchPrompt = `Search for the contact email address of this business:
-Name: ${p.name || 'Unknown'}
-Type: ${p.typePrecise || p.type || ''}
-Address: ${p.address || ''}, ${p.city || 'Belgium'}
-Known website: ${p.website || 'Not available'}
+      let scrapedText = '';
+      let websiteFound = p.website || null;
 
-Search Google, the business website, Facebook, Instagram, Yellow Pages, TripAdvisor.
-Look for their contact email, phone number, and website.
+      // Step 1: Try to fetch website if available
+      if (websiteFound) {
+        try {
+          const siteResp = await fetch(websiteFound.startsWith('http') ? websiteFound : 'https://' + websiteFound, {
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            timeout: 5000
+          });
+          const html = await siteResp.text();
+          // Extract text and emails from HTML
+          const stripped = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').substring(0, 3000);
+          scrapedText = stripped;
+        } catch(e) {}
+      }
 
-After searching, respond with ONLY a JSON object (no markdown, no explanation):
-{"email":"address@email.be","source":"website/Facebook/Google","website":"https://...","phone":"+32...","confidence":"high/medium/low"}
-Use null for fields not found.`;
+      // Step 2: Ask Claude Haiku to extract email from scraped content OR generate search links
+      const prompt = `Tu es un expert en recherche d'informations de contact pour des établissements commerciaux.
 
-      // Use streaming=false, betas for web search
+Établissement :
+- Nom : ${name}
+- Type : ${type}
+- Adresse : ${address}, ${city}
+- Site web : ${websiteFound || 'inconnu'}
+${scrapedText ? `\nContenu du site web (extrait) :\n${scrapedText.substring(0, 2000)}` : ''}
+
+Analyse ces informations et extrait ou déduit :
+1. L'adresse email de contact (cherche dans le contenu du site web si disponible)
+2. Le numéro de téléphone
+3. Le site web (si pas déjà connu)
+
+Réponds UNIQUEMENT en JSON valide :
+{"email":"adresse@domaine.be","phone":"+32...","website":"https://...","confidence":"haute|moyenne|faible","source":"site web|deduction|inconnu"}
+
+Si tu ne trouves pas d'email, mets null. Ne mets JAMAIS un email fictif ou inventé.`;
+
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-beta': 'web-search-2025-03-05'
+          'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
-          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-          messages: [{ role: 'user', content: searchPrompt }]
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 512,
+          messages: [{ role: 'user', content: prompt }]
         })
       });
 
       const result = await response.json();
-
       if (result.error) {
         return { statusCode: 400, body: JSON.stringify({ error: result.error.message }) };
       }
 
-      // Extract all text from response content blocks
-      let allText = '';
-      let foundEmail = null;
-      let foundPhone = null;
-      let foundWebsite = null;
-      let foundSource = null;
-      let foundConfidence = 'medium';
+      const text = result.content[0].text.replace(/```json|```/g, '').trim();
 
-      if (result.content && Array.isArray(result.content)) {
-        for (const block of result.content) {
-          if (block.type === 'text') {
-            allText += block.text + '\n';
-          }
-          // web_search_result blocks contain the actual search results
-          if (block.type === 'web_search_tool_result' || block.type === 'tool_result') {
-            const content = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
-            allText += content + '\n';
-          }
-        }
-      }
-
-      // Try to parse JSON from the text
-      const jsonMatch = allText.match(/\{\s*"email"[\s\S]*?\}/);
+      // Extract JSON
+      const jsonMatch = text.match(/\{[\s\S]*?\}/);
+      let parsed = { email: null, phone: null, website: websiteFound, confidence: 'faible', source: 'inconnu' };
       if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[0]);
-          foundEmail = parsed.email || null;
-          foundPhone = parsed.phone || null;
-          foundWebsite = parsed.website || null;
-          foundSource = parsed.source || null;
-          foundConfidence = parsed.confidence || 'medium';
-        } catch(e) {}
+        try { parsed = { ...parsed, ...JSON.parse(jsonMatch[0]) }; } catch(e) {}
       }
 
-      // Fallback: extract email with regex from all text
-      if (!foundEmail) {
+      // Fallback: regex email extraction from scraped text
+      if (!parsed.email && scrapedText) {
         const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-        const emails = allText.match(emailRegex);
+        const emails = scrapedText.match(emailRegex);
         if (emails) {
-          // Filter out anthropic/system emails
-          const validEmails = emails.filter(e =>
-            !e.includes('anthropic') &&
-            !e.includes('example') &&
-            !e.includes('test@') &&
-            !e.includes('@email.be') // placeholder
+          const valid = emails.filter(e =>
+            !e.includes('anthropic') && !e.includes('example') &&
+            !e.includes('sentry') && !e.includes('placeholder') &&
+            !e.endsWith('.png') && !e.endsWith('.jpg')
           );
-          if (validEmails.length > 0) {
-            foundEmail = validEmails[0];
-            foundSource = 'recherche web';
-            foundConfidence = 'medium';
+          if (valid.length > 0) {
+            parsed.email = valid[0];
+            parsed.source = 'site web (scraping)';
+            parsed.confidence = 'haute';
           }
         }
       }
 
-      // Extract phone if not found
-      if (!foundPhone) {
-        const phoneRegex = /(\+32|0032|04|02|03|04|09|010|011|012|013|014|015|016|017|018|019)[\s.\-]?[0-9]{2,3}[\s.\-]?[0-9]{2,3}[\s.\-]?[0-9]{2,3}/g;
-        const phones = allText.match(phoneRegex);
-        if (phones && phones.length > 0) {
-          foundPhone = phones[0];
-        }
-      }
+      // Generate search URLs for manual lookup
+      const encodedName = encodeURIComponent(`${name} ${city} email contact`);
+      const fbSearch = encodeURIComponent(`${name} ${city}`);
+      parsed.search_urls = {
+        google: `https://www.google.com/search?q=${encodedName}`,
+        facebook: `https://www.facebook.com/search/top?q=${fbSearch}`,
+        pages_jaunes: `https://www.pagesjaunes.be/fr/search?search_word=${encodeURIComponent(name)}&where=${encodeURIComponent(city)}`
+      };
 
       return {
         statusCode: 200,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: foundEmail,
-          phone: foundPhone,
-          website: foundWebsite,
-          source: foundSource,
-          confidence: foundConfidence
-        })
+        body: JSON.stringify(parsed)
       };
     }
 
-    // ── SCORE prospects via Claude Haiku ───────────────────────────────────
+    // ── SCORE ──────────────────────────────────────────────────────────────
     if (action === 'score') {
-      const prompt = `Tu es un expert en développement commercial pour Moodstream.ai.
-Analyse ces prospects et attribue un score de 0 à 100.
+      const prompt = `Expert Moodstream.ai. Score 0-100 ces prospects.
 Prospects : ${JSON.stringify(data.prospects)}
-Réponds UNIQUEMENT en JSON : {"scores":[{"id":"id","score":85,"score_surface":30,"score_secteur":35,"score_musique":20,"type_precise":"Restaurant gastronomique","surface_estimee":"150 m²","potentiel":"Élevé","raison":"explication courte"}]}`;
+JSON UNIQUEMENT : {"scores":[{"id":"id","score":85,"score_surface":30,"score_secteur":35,"score_musique":20,"type_precise":"Restaurant","surface_estimee":"150m²","potentiel":"Élevé","raison":"explication"}]}`;
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -146,11 +138,11 @@ Réponds UNIQUEMENT en JSON : {"scores":[{"id":"id","score":85,"score_surface":3
       return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: jsonMatch ? jsonMatch[0] : '{}' };
     }
 
-    // ── ENRICH prospects via Claude Haiku ──────────────────────────────────
+    // ── ENRICH ─────────────────────────────────────────────────────────────
     if (action === 'enrich') {
-      const prompt = `Tu es un expert en développement commercial pour Moodstream.ai.
-Enrichis ces établissements : ${JSON.stringify(data.prospects)}
-Réponds UNIQUEMENT en JSON : {"prospects":[{"id":"id","nom":"Nom","type_precise":"Type précis","secteur":"horeca|commerce|bienetre|sante|hotel|parking|sport|autre","surface_estimee":"~80 m²","score":78,"potentiel_musical":"Élevé|Moyen|Faible","raison_contact":"Raison courte","accroche":"Accroche email personnalisée"}]}`;
+      const prompt = `Expert Moodstream.ai. Enrichis ces établissements.
+${JSON.stringify(data.prospects)}
+JSON UNIQUEMENT : {"prospects":[{"id":"id","nom":"Nom","type_precise":"Type","secteur":"horeca|commerce|bienetre|sante|hotel|parking|sport|autre","surface_estimee":"~80m²","score":78,"potentiel_musical":"Élevé|Moyen|Faible","raison_contact":"Raison","accroche":"Accroche email"}]}`;
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -164,22 +156,21 @@ Réponds UNIQUEMENT en JSON : {"prospects":[{"id":"id","nom":"Nom","type_precise
       return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: jsonMatch ? jsonMatch[0] : '{}' };
     }
 
-    // ── GENERATE EMAIL via Claude Haiku ────────────────────────────────────
+    // ── EMAIL ──────────────────────────────────────────────────────────────
     if (action === 'email') {
       const p = data.prospect;
-      const prompt = `Rédige un email de prospection pour Moodstream.ai (diffusion musicale B2B) :
-- Chaleureux, court (max 150 mots), personnalisé
+      const prompt = `Email prospection Moodstream.ai (diffusion musicale B2B) :
+- Chaleureux, court max 150 mots, personnalisé
 - Adaptation automatique aux moments de la journée
-- Musiques 100% libres de droits, suppression redevances UNISONO
-- Essai gratuit 14 jours sans engagement
+- Musiques libres de droits, suppression UNISONO
+- Essai 14 jours gratuit sans engagement
 - CTA : moodstreamai.com/demande-de-devis
 
-Établissement : ${p.name || p.typePrecise || 'Établissement'}
-Type : ${p.typePrecise || p.type || ''}
-Surface : ${p.surfaceEstimee || 'non connue'}
-Accroche : ${p.accroche || ''}
+Établissement: ${p.name || p.typePrecise || 'Établissement'}
+Type: ${p.typePrecise || p.type || ''}
+Accroche: ${p.accroche || ''}
 
-Réponds UNIQUEMENT en JSON : {"objet":"sujet","corps":"corps complet de l'email"}`;
+JSON UNIQUEMENT : {"objet":"sujet","corps":"corps email complet"}`;
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
