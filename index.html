@@ -125,6 +125,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .btn-find-email:disabled{opacity:0.6;cursor:not-allowed}
 .email-found{background:#DCFCE7;color:#166534;font-size:11px;padding:3px 8px;border-radius:8px;font-weight:600}
 .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:10px;color:var(--gray-400);font-size:13px;text-align:center;padding:40px}
+.btn-batch-email{background:var(--green);color:#fff;border:none;border-radius:var(--radius-md);padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.2s;white-space:nowrap}
+.btn-batch-email:hover{background:var(--green-dark)}
+.btn-batch-email:disabled{opacity:0.6;cursor:not-allowed}
 
 /* EMAIL MODAL */
 .email-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:500;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(4px)}
@@ -230,7 +233,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     </div>
     <div class="ville-body">
       <div class="ville-sidebar">
-        <div class="ville-list-head"><span class="sidebar-title">Prospects identifiés</span><span class="count-badge" id="ville-count">—</span></div>
+        <div class="ville-list-head">
+  <div>
+    <span class="sidebar-title">Prospects avec email</span>
+    <span class="count-badge" id="ville-count">—</span>
+  </div>
+  <button class="btn-batch-email" id="btn-batch" onclick="createAllDrafts()" style="display:none">📧 Tous en brouillons</button>
+</div>
         <div class="ville-list" id="ville-list">
           <div class="empty-state"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Entrez une ville pour identifier tous les prospects</div>
         </div>
@@ -410,26 +419,43 @@ async function runVilleSearch(){
 }
 
 function renderVilleList(){
-  document.getElementById('ville-count').textContent=villeProspects.length;
-  const list=document.getElementById('ville-list');
-  if(!villeProspects.length){list.innerHTML='<div class="empty-state">Aucun prospect trouvé</div>';return;}
-  list.innerHTML=villeProspects.map((p,i)=>{
-    const score=p.scoreAI||p.scores.total;
-    const potClass=p.potentiel==='Élevé'?'eleve':p.potentiel==='Faible'?'faible':'moyen';
-    return`<div class="ville-card" style="animation-delay:${i*0.03}s">
-      <div class="ville-card-header"><div><div class="ville-card-name">${p.name||'(sans nom)'}</div><div class="ville-card-type">${p.typePrecise||p.type}</div></div><span class="potentiel-badge ${potClass}">${p.potentiel||'Moyen'}</span></div>
-      <div class="ville-card-info"><span class="info-pill">Score ${score}/100</span>${p.surfaceEstimee&&p.surfaceEstimee!=='N/D'?`<span class="info-pill">📐 ${p.surfaceEstimee}</span>`:''} ${p.address?`<span class="info-pill">📍 ${p.address}</span>`:''}</div>
-      ${p.raisonContact?`<div class="ville-card-raison">💡 ${p.raisonContact}</div>`:''}
+  // Only show prospects with email
+  const withEmail = villeProspects.filter(p => p.email && p.email.trim() !== '');
+  document.getElementById('ville-count').textContent = withEmail.length;
+  const btn = document.getElementById('btn-batch');
+  if(btn) btn.style.display = withEmail.length > 0 ? 'block' : 'none';
+
+  const list = document.getElementById('ville-list');
+  if(!withEmail.length){
+    list.innerHTML = '<div class="empty-state"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>Aucun établissement avec email trouvé dans cette zone</div>';
+    return;
+  }
+
+  list.innerHTML = withEmail.map((p, i) => {
+    const score = p.scoreAI || p.scores.total;
+    const potClass = p.potentiel === 'Élevé' ? 'eleve' : p.potentiel === 'Faible' ? 'faible' : 'moyen';
+    const realIdx = villeProspects.indexOf(p);
+    return `<div class="ville-card" style="animation-delay:${i*0.03}s">
+      <div class="ville-card-header">
+        <div>
+          <div class="ville-card-name">${p.name || '(sans nom)'}</div>
+          <div class="ville-card-type">${p.typePrecise || p.type}</div>
+        </div>
+        <span class="potentiel-badge ${potClass}">${p.potentiel || 'Moyen'}</span>
+      </div>
+      <div class="ville-card-info">
+        <span class="info-pill">Score ${score}/100</span>
+        ${p.surfaceEstimee && p.surfaceEstimee !== 'N/D' ? `<span class="info-pill">📐 ${p.surfaceEstimee}</span>` : ''}
+        ${p.address ? `<span class="info-pill">📍 ${p.address}</span>` : ''}
+      </div>
+      ${p.raisonContact ? `<div class="ville-card-raison">💡 ${p.raisonContact}</div>` : ''}
       <div class="ville-card-contact">
-        ${p.phone?`<div class="contact-row"><span>📞</span><span>${p.phone}</span></div>`:''}
-        ${p.email?`<div class="contact-row"><span>📧</span><a href="mailto:${p.email}" style="color:var(--green)">${p.email}</a></div>`:''}
-        ${p.website?`<div class="contact-row"><span>🌐</span><a href="${p.website.startsWith('http')?p.website:'https://'+p.website}" target="_blank" style="color:var(--green)">${p.website.replace(/https?:\/\//,'').split('/')[0]}</a></div>`:''}
-        ${!p.phone&&!p.email&&!p.website?'<div style="color:var(--gray-400);font-size:11px">Contacts non disponibles sur OSM</div>':''}
+        ${p.phone ? `<div class="contact-row"><span>📞</span><span>${p.phone}</span></div>` : ''}
+        <div class="contact-row"><span>📧</span><a href="mailto:${p.email}" style="color:var(--green)">${p.email}</a></div>
+        ${p.website ? `<div class="contact-row"><span>🌐</span><a href="${p.website.startsWith('http')?p.website:'https://'+p.website}" target="_blank" style="color:var(--green)">${p.website.replace(/https?:\/\//,'').split('/')[0]}</a></div>` : ''}
       </div>
       <div class="ville-card-actions">
-        <button class="btn-find-email" id="find-btn-${i}" onclick="findEmail(${i})">🔍 Trouver email</button>
-        <button class="btn-email" onclick="openEmailModal(villeProspects[${i}])">📧 Email</button>
-
+        <button class="btn-email" onclick="openEmailModal(villeProspects[${realIdx}])">📧 Générer email</button>
       </div>
     </div>`;
   }).join('');
@@ -492,6 +518,36 @@ function setProgress(pct,msg){document.getElementById('progress-panel').classLis
 function hideProgress(){document.getElementById('progress-panel').classList.remove('show');document.getElementById('progress-bar').style.width='0%';}
 
 document.getElementById('city-input').addEventListener('keydown',e=>{if(e.key==='Enter')runSearch();});
+
+async function createAllDrafts(){
+  const withEmail = villeProspects.filter(p => p.email && p.email.trim() !== '');
+  if(!withEmail.length){ alert('Aucun prospect avec email.'); return; }
+
+  const btn = document.getElementById('btn-batch');
+  btn.disabled = true;
+  btn.textContent = '⏳ Génération...';
+
+  let generated = 0;
+  for(const p of withEmail){
+    try{
+      btn.textContent = `⏳ ${generated+1}/${withEmail.length}...`;
+      const result = await callClaude('email', {prospect: p});
+      if(result?.objet && result?.corps){
+        const to = encodeURIComponent(p.email);
+        const subject = encodeURIComponent(result.objet);
+        const body = encodeURIComponent(result.corps);
+        window.open(`https://mail.google.com/mail/u/info%40moodstreamai.com/?view=cm&fs=1&to=${to}&su=${subject}&body=${body}`, '_blank');
+        // Wait a bit between opens to avoid popup blocking
+        await new Promise(r => setTimeout(r, 1500));
+      }
+      generated++;
+    }catch(e){ console.error('Email failed for', p.name, e); }
+  }
+
+  btn.disabled = false;
+  btn.textContent = `✅ ${generated} brouillons créés`;
+  setTimeout(() => { btn.textContent = '📧 Tous en brouillons'; }, 3000);
+}
 
 async function findEmail(idx){
   const p=villeProspects[idx];
