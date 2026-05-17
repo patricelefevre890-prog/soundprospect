@@ -495,33 +495,39 @@ document.getElementById('city-input').addEventListener('keydown',e=>{if(e.key===
 
 async function findEmail(idx){
   const p=villeProspects[idx];
-  const btn=document.getElementById(`find-btn-${idx}`);
+  const btn=document.getElementById('find-btn-'+idx);
   if(!btn)return;
   btn.disabled=true;btn.textContent='🔄 Recherche...';
   try{
     const result=await callClaude('find_email',{prospect:{name:p.name,typePrecise:p.typePrecise||p.type,address:p.address,city:p.city,website:p.website}});
+    const contactDiv=btn.closest('.ville-card').querySelector('.ville-card-contact');
     if(result.email){
       p.email=result.email;
       if(result.website&&!p.website)p.website=result.website;
       if(result.phone&&!p.phone)p.phone=result.phone;
-      p.emailSource=result.source;
-      p.emailConfidence=result.confidence;
       btn.textContent='✅ Email trouvé';
-      btn.style.background='#DCFCE7';btn.style.color='#166534';btn.style.borderColor='#86EFAC';
-      // Refresh the contact section
-      const contactDiv=btn.closest('.ville-card').querySelector('.ville-card-contact');
-      if(contactDiv){
-        let html='';
-        if(p.phone)html+=`<div class="contact-row"><span>📞</span><span>${p.phone}</span></div>`;
-        if(p.email)html+=`<div class="contact-row"><span>📧</span><a href="mailto:${p.email}" style="color:var(--green)">${p.email}</a> <span class="email-found">${result.source||''}</span></div>`;
-        if(p.website)html+=`<div class="contact-row"><span>🌐</span><a href="${p.website.startsWith('http')?p.website:'https://'+p.website}" target="_blank" style="color:var(--green)">${p.website.replace(/https?:\/\//,'').split('/')[0]}</a></div>`;
-        if(!html)html='<div style="color:var(--gray-400);font-size:11px">Aucun email trouvé</div>';
-        contactDiv.innerHTML=html;
-      }
+      btn.style.cssText='background:#DCFCE7;color:#166534;border-color:#86EFAC';
     }else{
-      btn.textContent='❌ Non trouvé';
-      btn.style.background='#FEE2E2';btn.style.color='#991B1B';btn.style.borderColor='#FECACA';
-      setTimeout(()=>{btn.textContent='🔍 Réessayer';btn.disabled=false;btn.style='';},3000);
+      btn.textContent='🔗 Liens recherche';
+      btn.style.cssText='background:#FEF9C3;color:#854D0E;border-color:#FDE047';
+      if(result.website&&!p.website)p.website=result.website;
+      if(result.phone&&!p.phone)p.phone=result.phone;
+    }
+    if(contactDiv){
+      var h='';
+      if(p.phone)h+='<div class="contact-row"><span>📞</span><span>'+p.phone+'</span></div>';
+      if(p.email)h+='<div class="contact-row"><span>📧</span><a href="mailto:'+p.email+'" style="color:var(--green)">'+p.email+'</a>'+(result.source?' <span class="email-found">'+result.source+'</span>':'')+'</div>';
+      if(p.website){var ws=p.website.startsWith('http')?p.website:'https://'+p.website;h+='<div class="contact-row"><span>🌐</span><a href="'+ws+'" target="_blank" style="color:var(--green)">'+ws.replace(/https?:\/\//,'').split('/')[0]+'</a></div>';}
+      if(!p.email&&result.search_urls){
+        h+='<div style="margin-top:6px;font-size:11px;color:var(--gray-400)">Recherche manuelle :</div>';
+        h+='<div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">';
+        if(result.search_urls.google)h+='<a href="'+result.search_urls.google+'" target="_blank" style="font-size:11px;padding:3px 8px;background:#E8F0FE;color:#1967D2;border-radius:6px;text-decoration:none;">🔍 Google</a>';
+        if(result.search_urls.facebook)h+='<a href="'+result.search_urls.facebook+'" target="_blank" style="font-size:11px;padding:3px 8px;background:#E7F3FF;color:#1877F2;border-radius:6px;text-decoration:none;">📘 Facebook</a>';
+        if(result.search_urls.pages_jaunes)h+='<a href="'+result.search_urls.pages_jaunes+'" target="_blank" style="font-size:11px;padding:3px 8px;background:#FFFBEB;color:#92400E;border-radius:6px;text-decoration:none;">📒 Pages Jaunes</a>';
+        h+='</div>';
+      }
+      if(!h)h='<div style="color:var(--gray-400);font-size:11px">Aucune info trouvée</div>';
+      contactDiv.innerHTML=h;
     }
   }catch(e){
     btn.textContent='⚠️ Erreur';btn.disabled=false;
