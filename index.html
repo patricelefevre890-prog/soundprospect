@@ -461,15 +461,7 @@ async function openModal(prospect){
     if(r?.objet&&r?.corps){document.getElementById('m-subject').value=r.objet;document.getElementById('m-body').value=r.corps;}
   }catch(e){
     document.getElementById('m-subject').value=(prospect.name||'Votre établissement')+' — Moodstream.ai';
-    document.getElementById('m-body').value='Bonjour,
-
-Je me permets de vous contacter au sujet de la diffusion musicale dans votre établissement.
-
-Je m'appelle Arnaud, fondateur de Moodstream.ai — une solution belge qui permet aux commerces de diffuser une musique adaptée à chaque moment de leur journée, 100% libre de droits. Concrètement, vous supprimez les redevances UNISONO.
-
-Si le sujet vous intéresse, je propose un essai gratuit de 14 jours, sans engagement.
-
-Cordialement';
+    document.getElementById('m-body').value='Bonjour,\n\nJe me permets de vous contacter au sujet de la diffusion musicale dans votre établissement.\n\nJe m\'appelle Arnaud, fondateur de Moodstream.ai — une solution belge qui permet aux commerces de diffuser une musique adaptée à chaque moment de leur journée, 100% libre de droits. Concrètement, vous supprimez les redevances UNISONO.\n\nSi le sujet vous intéresse, je propose un essai gratuit de 14 jours, sans engagement.\n\nCordialement';
   }finally{document.getElementById('gen-badge').classList.remove('show');}
 }
 
