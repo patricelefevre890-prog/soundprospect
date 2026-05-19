@@ -432,41 +432,46 @@ async function geocode(city){
   return d.length?{lat:parseFloat(d[0].lat),lon:parseFloat(d[0].lon)}:null;
 }
 
-// ── OSM : requêtes TOUS établissements ───────────────────────────────────────
-// On récupère TOUT ce qui a name + (amenity OU shop OU office OU leisure OU tourism)
-// pas de filtre de type — tout établissement nommé est inclus
+// ── OSM : requêtes découpées pour éviter le timeout Overpass ─────────────────
+// 2 requêtes parallèles légères fusionnées côté client
 
-function buildQuery(lat, lon, radius, withEmail=false) {
+const OVERPASS_ENDPOINT = 'https://overpass-api.de/api/interpreter';
+
+async function overpassFetch(query) {
+  const resp = await fetch(OVERPASS_ENDPOINT, {
+    method: 'POST',
+    body: 'data=' + encodeURIComponent(query)
+  });
+  if (!resp.ok) throw new Error('Overpass HTTP ' + resp.status);
+  const json = await resp.json();
+  return json.elements || [];
+}
+
+function buildQueryChunk(lat, lon, radius, tags, withEmail) {
   const r = parseInt(radius);
-  const emailFilter = withEmail ? '["email"]' : '';
-  // On cible : amenity (tout), shop (tout), leisure (tout), tourism (tout), office (tout)
-  // On exclut les nodes sans nom car inutiles
-  return `[out:json][timeout:45];
-(
-  node["amenity"]["name"]${emailFilter}(around:${r},${lat},${lon});
-  node["shop"]["name"]${emailFilter}(around:${r},${lat},${lon});
-  node["leisure"]["name"]${emailFilter}(around:${r},${lat},${lon});
-  node["tourism"]["name"]${emailFilter}(around:${r},${lat},${lon});
-  node["office"]["name"]${emailFilter}(around:${r},${lat},${lon});
-  way["amenity"]["name"]${emailFilter}(around:${r},${lat},${lon});
-  way["shop"]["name"]${emailFilter}(around:${r},${lat},${lon});
-  way["leisure"]["name"]${emailFilter}(around:${r},${lat},${lon});
-  way["tourism"]["name"]${emailFilter}(around:${r},${lat},${lon});
-  way["office"]["name"]${emailFilter}(around:${r},${lat},${lon});
-);
-out center tags;`;
+  const ef = withEmail ? '["email"]' : '';
+  let lines = '';
+  for (const tag of tags) {
+    lines += '  node["' + tag + '"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');\n';
+    lines += '  way["' + tag + '"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');\n';
+  }
+  return '[out:json][timeout:30];\n(\n' + lines + ');\nout center tags;';
 }
 
-async function fetchAll(lat,lon,radius){
-  const q = buildQuery(lat, lon, radius, false);
-  const resp=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q)});
-  return(await resp.json()).elements||[];
+async function fetchAll(lat, lon, radius) {
+  const [c1, c2] = await Promise.all([
+    overpassFetch(buildQueryChunk(lat, lon, radius, ['amenity','shop'], false)),
+    overpassFetch(buildQueryChunk(lat, lon, radius, ['leisure','tourism','office'], false))
+  ]);
+  return [...c1, ...c2];
 }
 
-async function fetchWithEmail(lat,lon,radius){
-  const q = buildQuery(lat, lon, radius, true);
-  const resp=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q)});
-  return(await resp.json()).elements||[];
+async function fetchWithEmail(lat, lon, radius) {
+  const [c1, c2] = await Promise.all([
+    overpassFetch(buildQueryChunk(lat, lon, radius, ['amenity','shop'], true)),
+    overpassFetch(buildQueryChunk(lat, lon, radius, ['leisure','tourism','office'], true))
+  ]);
+  return [...c1, ...c2];
 }
 
 function parseElement(el, geo){
