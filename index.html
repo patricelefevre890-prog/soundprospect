@@ -432,45 +432,33 @@ async function geocode(city){
   return d.length?{lat:parseFloat(d[0].lat),lon:parseFloat(d[0].lon)}:null;
 }
 
-// ── OSM fetch — via proxy Netlify (pas de timeout/rate-limit navigateur) ──────
+// ── OSM fetch — via proxy Netlify ────────────────────────────────────────────
+// Le proxy construit et envoie les micro-requêtes Overpass côté serveur
 
-function buildQuery(lat, lon, radius, withEmail) {
-  const r = parseInt(radius);
-  const ef = withEmail ? '["email"]' : '';
-  return (
-    '[out:json][timeout:50];' +
-    '(' +
-    'node["amenity"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
-    'way["amenity"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
-    'node["shop"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
-    'way["shop"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
-    'node["leisure"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
-    'way["leisure"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
-    ');' +
-    'out center tags qt;'
-  );
-}
-
-async function overpassFetch(query) {
+async function fetchAll(lat, lon, radius) {
   const resp = await fetch('/.netlify/functions/overpass', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ lat, lon, radius, withEmail: false }),
   });
   if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: 'Erreur serveur ' + resp.status }));
-    throw new Error(err.error || 'Erreur serveur');
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || 'Erreur proxy ' + resp.status);
   }
-  const data = await resp.json();
-  return data.elements || [];
-}
-
-async function fetchAll(lat, lon, radius) {
-  return overpassFetch(buildQuery(lat, lon, radius, false));
+  return (await resp.json()).elements || [];
 }
 
 async function fetchWithEmail(lat, lon, radius) {
-  return overpassFetch(buildQuery(lat, lon, radius, true));
+  const resp = await fetch('/.netlify/functions/overpass', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lat, lon, radius, withEmail: true }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || 'Erreur proxy ' + resp.status);
+  }
+  return (await resp.json()).elements || [];
 }
 
 function parseElement(el, geo){
