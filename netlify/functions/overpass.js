@@ -8,6 +8,8 @@ const SERVERS = [
 const cache = new Map();
 const CACHE_TTL = 10 * 60 * 1000;
 
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 function makeQuery(lat, lon, radius, tag, withEmail) {
   const r = Math.min(parseInt(radius), 2000);
   const ef = withEmail ? '["email"]' : '';
@@ -34,26 +36,34 @@ async function fetchOne(query, tag) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 7000);
 
+      // Pas de Content-Type — laisser fetch définir multipart/form-data
+      // User-Agent identifie l'app pour Overpass
+      const formBody = 'data=' + encodeURIComponent(query);
       const resp = await fetch(server, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(query),
+        headers: {
+          'User-Agent': 'MoodstreamAI/1.0 (prospection@moodstreamai.com)',
+        },
+        body: formBody,
         signal: controller.signal,
       });
       clearTimeout(timer);
 
-      console.log('[overpass] tag=' + tag + ' status=' + resp.status + ' server=' + server);
+      console.log('[overpass] tag=' + tag + ' status=' + resp.status);
 
+      if (resp.status === 429) {
+        console.log('[overpass] rate limited, waiting 1s...');
+        await sleep(1000);
+        continue;
+      }
       if (!resp.ok) {
-        console.log('[overpass] non-ok, skipping server');
+        console.log('[overpass] non-ok ' + resp.status + ', trying next server');
         continue;
       }
 
       const text = await resp.text();
-      console.log('[overpass] tag=' + tag + ' response length=' + text.length + ' starts=' + text.trim().substring(0, 30));
-
       if (!text.trim().startsWith('{')) {
-        console.log('[overpass] non-JSON response, skipping');
+        console.log('[overpass] non-JSON response: ' + text.substring(0, 100));
         continue;
       }
 
@@ -65,7 +75,7 @@ async function fetchOne(query, tag) {
       return elements;
 
     } catch (e) {
-      console.log('[overpass] error tag=' + tag + ' server=' + server + ' err=' + e.message);
+      console.log('[overpass] error tag=' + tag + ': ' + e.message);
       continue;
     }
   }
@@ -86,20 +96,16 @@ exports.handler = async (event) => {
 
   try {
     const body = JSON.parse(event.body || '{}');
-    console.log('[overpass] received:', JSON.stringify(body));
-
     const { lat, lon, radius, withEmail } = body;
-    if (!lat || !lon || !radius) {
-      console.log('[overpass] missing params');
-      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing lat/lon/radius' }) };
-    }
+    if (!lat || !lon || !radius) return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing lat/lon/radius' }) };
 
     let allElements = [];
     for (const tag of ['amenity', 'shop', 'leisure']) {
       const q = makeQuery(lat, lon, radius, tag, withEmail);
-      console.log('[overpass] query for ' + tag + ':', q.substring(0, 100));
       const els = await fetchOne(q, tag);
       allElements = allElements.concat(els);
+      // Petite pause entre requêtes pour éviter le rate-limit
+      await sleep(300);
     }
 
     const seen = new Set();
