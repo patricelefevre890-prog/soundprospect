@@ -432,46 +432,60 @@ async function geocode(city){
   return d.length?{lat:parseFloat(d[0].lat),lon:parseFloat(d[0].lon)}:null;
 }
 
-// ── OSM : requêtes découpées pour éviter le timeout Overpass ─────────────────
-// 2 requêtes parallèles légères fusionnées côté client
+// ── OSM fetch — séquentiel, serveurs alternatifs, requêtes compactes ─────────
+// Stratégie : 1 seule requête à la fois, fallback sur un 2e serveur si 504/429
 
-const OVERPASS_ENDPOINT = 'https://overpass-api.de/api/interpreter';
+const OVERPASS_SERVERS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
+];
 
 async function overpassFetch(query) {
-  const resp = await fetch(OVERPASS_ENDPOINT, {
-    method: 'POST',
-    body: 'data=' + encodeURIComponent(query)
-  });
-  if (!resp.ok) throw new Error('Overpass HTTP ' + resp.status);
-  const json = await resp.json();
-  return json.elements || [];
+  for (const server of OVERPASS_SERVERS) {
+    try {
+      const resp = await fetch(server, {
+        method: 'POST',
+        body: 'data=' + encodeURIComponent(query),
+        signal: AbortSignal.timeout(25000)
+      });
+      if (resp.status === 429 || resp.status === 504) continue; // essaie le suivant
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const json = await resp.json();
+      return json.elements || [];
+    } catch(e) {
+      if (e.name === 'TimeoutError' || e.message.includes('504') || e.message.includes('429')) continue;
+      throw e;
+    }
+  }
+  throw new Error('Tous les serveurs Overpass sont indisponibles. Réessayez dans quelques secondes.');
 }
 
-function buildQueryChunk(lat, lon, radius, tags, withEmail) {
+// Une seule requête compacte : amenity + shop uniquement (les plus pertinents)
+// Les nodes ET ways dans un seul bloc — timeout généreux côté serveur
+function buildQuery(lat, lon, radius, withEmail) {
   const r = parseInt(radius);
   const ef = withEmail ? '["email"]' : '';
-  let lines = '';
-  for (const tag of tags) {
-    lines += '  node["' + tag + '"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');\n';
-    lines += '  way["' + tag + '"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');\n';
-  }
-  return '[out:json][timeout:30];\n(\n' + lines + ');\nout center tags;';
+  return (
+    '[out:json][timeout:25];' +
+    '(' +
+    'node["amenity"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
+    'way["amenity"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
+    'node["shop"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
+    'way["shop"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
+    'node["leisure"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
+    'way["leisure"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
+    ');' +
+    'out center tags qt;'
+  );
 }
 
 async function fetchAll(lat, lon, radius) {
-  const [c1, c2] = await Promise.all([
-    overpassFetch(buildQueryChunk(lat, lon, radius, ['amenity','shop'], false)),
-    overpassFetch(buildQueryChunk(lat, lon, radius, ['leisure','tourism','office'], false))
-  ]);
-  return [...c1, ...c2];
+  return overpassFetch(buildQuery(lat, lon, radius, false));
 }
 
 async function fetchWithEmail(lat, lon, radius) {
-  const [c1, c2] = await Promise.all([
-    overpassFetch(buildQueryChunk(lat, lon, radius, ['amenity','shop'], true)),
-    overpassFetch(buildQueryChunk(lat, lon, radius, ['leisure','tourism','office'], true))
-  ]);
-  return [...c1, ...c2];
+  return overpassFetch(buildQuery(lat, lon, radius, true));
 }
 
 function parseElement(el, geo){
