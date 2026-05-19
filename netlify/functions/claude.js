@@ -1,69 +1,100 @@
+// netlify/functions/claude.js
+
+const Anthropic = require('@anthropic-ai/sdk');
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
 exports.handler = async (event) => {
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method Not Allowed' };
-  }
+  const headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Content-Type': 'application/json',
+  };
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'API key not configured' }) };
-  }
-
-  const TYPE_LABELS_MAP = {bar:'Bar',pub:'Pub',restaurant:'Restaurant',cafe:'Cafe',nightclub:'Boite de nuit',fast_food:'Fast-food',ice_cream:'Glacier',clothes:'Boutique de vetements',shoes:'Boutique de chaussures',hairdresser:'Salon de coiffure',beauty:'Institut de beaute',mall:'Centre commercial',supermarket:'Supermarche',bakery:'Boulangerie',sports:'Commerce de sport',fitness:'Salle de fitness',hotel:'Hotel',hostel:'Auberge',guest_house:'Chambre hote',pharmacy:'Pharmacie',doctors:'Cabinet medical',dentist:'Cabinet dentaire',physiotherapist:'Cabinet kine',spa:'Spa',massage:'Institut de massage',parking:'Parking'};
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
+  if (event.httpMethod !== 'POST') return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
 
   try {
-    const { action, data } = JSON.parse(event.body);
+    const { action, data } = JSON.parse(event.body || '{}');
 
+    // ── ACTION : SEARCH ───────────────────────────────────────────────────────
+    if (action === 'search') {
+      const { city, radius, withEmail } = data;
+      const radiusLabel = radius <= 500 ? '500m' : radius <= 1000 ? '1km' : radius <= 2000 ? '2km' : '5km';
+      const emailClause = withEmail ? 'qui ont une adresse email publique' : '';
+
+      const prompt = `Tu es un assistant de prospection commerciale. 
+Cherche tous les établissements commerciaux ${emailClause} situés dans un rayon de ${radiusLabel} autour de "${city}" en Belgique (ou France si non trouvé en Belgique).
+
+Inclus TOUS les types : restaurants, bars, cafés, commerces, hôtels, coiffeurs, instituts de beauté, salles de sport, cabinets médicaux, dentistes, kinés, pharmacies, supermarchés, boulangeries, garages, etc.
+
+Pour chaque établissement trouvé, retourne un objet JSON avec exactement ces champs :
+- name : nom de l'établissement
+- type : type (restaurant, bar, coiffeur, etc.)
+- address : adresse complète
+- email : adresse email si disponible (sinon chaîne vide)
+- phone : téléphone si disponible (sinon chaîne vide)
+- website : site web si disponible (sinon chaîne vide)
+- lat : latitude (nombre)
+- lon : longitude (nombre)
+
+Retourne UNIQUEMENT un objet JSON valide avec ce format, sans texte avant ni après :
+{"prospects": [...]}
+
+Cherche autant d'établissements que possible, vise au moins 20-30 résultats.`;
+
+      const response = await client.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4000,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages: [{ role: 'user', content: prompt }],
+      });
+
+      // Extraire le texte final de la réponse (après tool use)
+      let resultText = '';
+      for (const block of response.content) {
+        if (block.type === 'text') resultText += block.text;
+      }
+
+      // Parser le JSON retourné par Claude
+      const jsonMatch = resultText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('No JSON in response');
+      const parsed = JSON.parse(jsonMatch[0]);
+      return { statusCode: 200, headers, body: JSON.stringify(parsed) };
+    }
+
+    // ── ACTION : EMAIL ────────────────────────────────────────────────────────
     if (action === 'email') {
-      const p = data.prospect;
-      const type = p.typePrecise || TYPE_LABELS_MAP[p.amenity] || TYPE_LABELS_MAP[p.shop] || p.amenity || p.shop || 'etablissement';
-      const name = p.name || type;
+      const { prospect } = data;
+      const prompt = `Tu es Arnaud Gregoire, fondateur de Moodstream.AI, une startup belge de diffusion musicale pour commerces (100% libre de droits, remplace les redevances UNISONO/SABAM).
 
-      const prompt = "Tu es Arnaud, fondateur de Moodstream.ai. Ecris un email naturel et humain a " + name + " qui est un(e) " + type + ".\n\nStructure EXACTE :\n\n1. Bonjour,\n\n2. Premier paragraphe : Commencer par je me permets de vous contacter au sujet de la diffusion musicale dans votre etablissement. Puis se presenter : je m appelle Arnaud, je suis le fondateur de Moodstream.ai, une solution belge de gestion et diffusion musicale pour les commerces. 2 phrases max.\n\n3. Deuxieme paragraphe : Dire qu on imagine qu ils diffusent de la musique dans leur espace (adapter : salle, surface, salle d attente selon le type) et que l ambiance sonore est importante pour leurs clients et l image de leur etablissement. Mentionner que les couts lies a UNISONO et aux societes de gestion collective peuvent representer une vraie charge financiere.\n\n4. Troisieme paragraphe : Moodstream.ai est un logiciel de diffusion et gestion musicale. Il permet de creer un horaire de diffusion precis pour chaque jour de la semaine, avec une ambiance qui change automatiquement selon les moments de la journee. Notre equipe peut creer cet horaire avec eux gratuitement, ou ils peuvent utiliser notre IA de conseil, ou le faire eux-memes en toute autonomie. Il est aussi possible d ajouter des annonces vocales personnalisees.\n\n5. Quatrieme paragraphe : Nos musiques sont 100% libres de toute redevance aux societes de gestion collective, ce qui permet de faire des economies drastiques.\n\n6. Appel a l action : essai gratuit 14 jours sans engagement. Devis sur https://www.moodstreamai.com/demande-de-devis ou repondre a cet email pour toute question.\n\n7. Cordialement uniquement, pas de coordonnees, pas de nom.\n\nTon : humain, simple, direct. Max 230 mots.\n\nPour l objet : utiliser le format Une nouvelle solution musicale pour l ambiance de [nom etablissement ou type etablissement].\n\nReponds UNIQUEMENT en JSON valide sans markdown :\n{\"objet\":\"Une nouvelle solution musicale pour l ambiance de [nom]\",\"corps\":\"corps complet\"}";
+Rédige un email de prospection court, naturel et personnel pour "${prospect.name || 'cet établissement'}" (${prospect.type || prospect.amenity || prospect.shop || 'commerce'}).
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 1500, messages: [{ role: 'user', content: prompt }] })
+L'email doit :
+- Être en français, ton chaleureux et direct (pas corporate)
+- Mentionner spécifiquement le type d'établissement
+- Expliquer brièvement la valeur : musique adaptée + suppression redevances
+- Proposer un essai gratuit 14 jours
+- Faire 4-6 phrases maximum
+
+Retourne UNIQUEMENT ce JSON sans texte avant ni après :
+{"objet": "...", "corps": "..."}`;
+
+      const response = await client.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }],
       });
 
-      const result = await response.json();
-      if (result.error) return { statusCode: 400, body: JSON.stringify({ error: result.error.message }) };
-      const text = result.content[0].text.replace(/```json|```/g, '').trim();
+      const text = response.content.find(b => b.type === 'text')?.text || '';
       const jsonMatch = text.match(/\{[\s\S]*\}/);
-      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: jsonMatch ? jsonMatch[0] : '{}' };
+      if (!jsonMatch) throw new Error('No JSON in email response');
+      return { statusCode: 200, headers, body: jsonMatch[0] };
     }
 
-    if (action === 'score') {
-      const prompt = "Expert Moodstream.ai. Score 0-100 ces prospects selon surface, secteur, probabilite musicale.\nProspects : " + JSON.stringify(data.prospects) + "\nJSON UNIQUEMENT : {\"scores\":[{\"id\":\"id\",\"score\":85,\"score_surface\":30,\"score_secteur\":35,\"score_musique\":20,\"type_precise\":\"Restaurant\",\"surface_estimee\":\"150m2\",\"potentiel\":\"Eleve\",\"raison\":\"explication\"}]}";
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] })
-      });
-      const result = await response.json();
-      if (result.error) return { statusCode: 400, body: JSON.stringify({ error: result.error.message }) };
-      const text = result.content[0].text.replace(/```json|```/g, '').trim();
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: jsonMatch ? jsonMatch[0] : '{}' };
-    }
+    return { statusCode: 400, headers, body: JSON.stringify({ error: 'Unknown action' }) };
 
-    if (action === 'enrich') {
-      const prompt = "Expert Moodstream.ai. Enrichis ces etablissements.\n" + JSON.stringify(data.prospects) + "\nJSON UNIQUEMENT : {\"prospects\":[{\"id\":\"id\",\"nom\":\"Nom\",\"type_precise\":\"Type\",\"secteur\":\"horeca\",\"surface_estimee\":\"80m2\",\"score\":78,\"potentiel_musical\":\"Eleve\",\"raison_contact\":\"Raison\",\"accroche\":\"Accroche email\"}]}";
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] })
-      });
-      const result = await response.json();
-      if (result.error) return { statusCode: 400, body: JSON.stringify({ error: result.error.message }) };
-      const text = result.content[0].text.replace(/```json|```/g, '').trim();
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: jsonMatch ? jsonMatch[0] : '{}' };
-    }
-
-    return { statusCode: 400, body: JSON.stringify({ error: 'Unknown action' }) };
-
-  } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+  } catch (e) {
+    console.error('[claude] error:', e.message);
+    return { statusCode: 500, headers, body: JSON.stringify({ error: e.message }) };
   }
 };
