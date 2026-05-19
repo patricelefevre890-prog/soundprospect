@@ -75,6 +75,7 @@ L'email doit suivre EXACTEMENT cette structure et ce ton :
 6. "Je vous propose un essai gratuit de 14 jours sans engagement. Vous pouvez demander un devis sur https://www.moodstreamai.com/demande-de-devis ou simplement me répondre si vous avez des questions."
 7. "Cordialement"
 
+IMPORTANT : Ne mets PAS de signature (pas de nom, pas de titre, pas de coordonnées) à la fin — elle sera ajoutée automatiquement.
 Ton : chaleureux, direct, personnel. Longueur : 150-200 mots. Langue : français uniquement.
 
 Retourne UNIQUEMENT ce JSON sans texte avant ni après :
