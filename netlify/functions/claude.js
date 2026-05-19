@@ -61,15 +61,21 @@ Donne minimum 15 établissements réels avec leurs vraies coordonnées GPS.`;
     // ── ACTION : EMAIL ───────────────────────────────────────────────────────
     if (action === 'email') {
       const { prospect } = data;
-      const prompt = `Tu es Arnaud Gregoire, fondateur de Moodstream.AI, startup belge de diffusion musicale pour commerces (100% libre de droits, remplace UNISONO/SABAM).
+      const type = prospect.type || prospect.amenity || prospect.shop || 'établissement';
+      const name = prospect.name || 'votre établissement';
+      const prompt = `Tu es Arnaud Gregoire, fondateur de Moodstream.ai. Rédige un email de prospection pour "${name}" (${type}).
 
-Rédige un email de prospection court et personnel pour "${prospect.name || 'cet établissement'}" (${prospect.type || prospect.amenity || prospect.shop || 'commerce'}).
+L'email doit suivre EXACTEMENT cette structure et ce ton :
 
-- Français, ton chaleureux et direct
-- Mentionne le type d'établissement
-- Valeur : musique adaptée + suppression redevances
-- Essai gratuit 14 jours
-- 4-6 phrases max
+1. "Bonjour," (salutation simple)
+2. Phrase d'introduction : "Je me permets de vous contacter au sujet de la diffusion musicale dans votre établissement. Je m'appelle Arnaud, je suis le fondateur de Moodstream.ai, une solution belge de gestion et diffusion musicale pour les commerces."
+3. Phrase personnalisée sur l'importance de la musique pour ce type d'établissement (${type}) et le problème des coûts UNISONO/sociétés de gestion collective.
+4. Description de Moodstream.ai : logiciel de diffusion et gestion musicale, horaire précis par jour/moment, ambiance automatique, équipe disponible pour créer l'horaire gratuitement, IA de conseil, autonomie possible, annonces vocales personnalisées.
+5. "Le meilleur ? Nos musiques sont 100% libres de toute redevance aux sociétés de gestion collective. Ça vous permet de faire des économies drastiques."
+6. "Je vous propose un essai gratuit de 14 jours sans engagement. Vous pouvez demander un devis sur https://www.moodstreamai.com/demande-de-devis ou simplement me répondre si vous avez des questions."
+7. "Cordialement"
+
+Ton : chaleureux, direct, personnel. Longueur : 150-200 mots. Langue : français uniquement.
 
 Retourne UNIQUEMENT ce JSON sans texte avant ni après :
 {"objet":"...","corps":"..."}`;
