@@ -472,7 +472,7 @@ function buildQuery(lat, lon, radius, withEmail) {
     'node["shop"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
     'node["leisure"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
     ');' +
-    'out tags qt 300;'
+    'out body qt 300;'
   );
 }
 
