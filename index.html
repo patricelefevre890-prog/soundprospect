@@ -432,33 +432,53 @@ async function geocode(city){
   return d.length?{lat:parseFloat(d[0].lat),lon:parseFloat(d[0].lon)}:null;
 }
 
-// ── OSM fetch — via proxy Netlify ────────────────────────────────────────────
-// Le proxy construit et envoie les micro-requêtes Overpass côté serveur
+// ── SEARCH via Claude web_search ─────────────────────────────────────────────
 
-async function fetchAll(lat, lon, radius) {
-  const resp = await fetch('/.netlify/functions/overpass', {
+async function fetchAll(lat, lon, radius, city) {
+  const resp = await fetch('/.netlify/functions/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lat, lon, radius, withEmail: false }),
+    body: JSON.stringify({ action: 'search', data: { city, radius, withEmail: false } }),
   });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err.error || 'Erreur proxy ' + resp.status);
-  }
-  return (await resp.json()).elements || [];
+  if (!resp.ok) throw new Error('Erreur serveur ' + resp.status);
+  const data = await resp.json();
+  // Convertir le format Claude → format interne
+  return (data.prospects || []).map(p => claudeToElement(p));
 }
 
-async function fetchWithEmail(lat, lon, radius) {
-  const resp = await fetch('/.netlify/functions/overpass', {
+async function fetchWithEmail(lat, lon, radius, city) {
+  const resp = await fetch('/.netlify/functions/claude', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ lat, lon, radius, withEmail: true }),
+    body: JSON.stringify({ action: 'search', data: { city, radius, withEmail: true } }),
   });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err.error || 'Erreur proxy ' + resp.status);
-  }
-  return (await resp.json()).elements || [];
+  if (!resp.ok) throw new Error('Erreur serveur ' + resp.status);
+  const data = await resp.json();
+  return (data.prospects || []).filter(p => p.email).map(p => claudeToElement(p));
+}
+
+function claudeToElement(p) {
+  // Convertit un prospect Claude au format parseElement
+  const amenity = p.type || '';
+  const shop = '';
+  const area = null;
+  const scores = computeScore(amenity, shop, area);
+  return {
+    lat: parseFloat(p.lat) || 0,
+    lon: parseFloat(p.lon) || 0,
+    name: p.name || '',
+    amenity,
+    shop,
+    area,
+    scores,
+    dist: 0, // sera calculé après
+    email: p.email || '',
+    phone: p.phone || '',
+    website: p.website || '',
+    address: p.address || '',
+    selected: false,
+    checked: false,
+  };
 }
 
 function parseElement(el, geo){
@@ -522,12 +542,13 @@ async function runAnalyse(){
     const map=getMap('a',geo.lat,geo.lon); clearMap('a');
     circleA=L.circle([geo.lat,geo.lon],{radius:parseInt(radius),color:'#1D9E75',fillColor:'#1D9E75',fillOpacity:0.07,weight:1.5}).addTo(map);
     L.marker([geo.lat,geo.lon],{icon:L.divIcon({className:'',html:'<div style="width:12px;height:12px;border-radius:50%;background:#1D9E75;border:2px solid white;"></div>',iconSize:[12,12],iconAnchor:[6,6]})}).addTo(map);
-    showLoad('a','Récupération de tous les établissements...');
-    const els=await fetchAll(geo.lat,geo.lon,radius);
-    prospectsA=els.map(el=>parseElement(el,geo)).filter(Boolean);
-    // Dédoublonnage par nom+lat+lon
+    showLoad('a','Claude recherche les établissements...');
+    const els=await fetchAll(geo.lat,geo.lon,radius,city);
+    prospectsA=els.filter(p=>p&&p.lat&&p.lon);
+    // Calcul de la distance réelle et dédoublonnage
+    prospectsA.forEach(p=>p.dist=haversine(geo.lat,geo.lon,p.lat,p.lon));
     const seen=new Set();
-    prospectsA=prospectsA.filter(p=>{const k=`${p.name}|${p.lat.toFixed(5)}|${p.lon.toFixed(5)}`;if(seen.has(k))return false;seen.add(k);return true;});
+    prospectsA=prospectsA.filter(p=>{const k=`${p.name}|${p.lat.toFixed(4)}|${p.lon.toFixed(4)}`;if(seen.has(k))return false;seen.add(k);return true;});
     prospectsA.sort((a,b)=>b.scores.total-a.scores.total);
     prospectsA.forEach((p,i)=>p._idx=i);
     prospectsA.forEach(p=>{
@@ -602,11 +623,12 @@ async function runEmail(){
     const map=getMap('e',geo.lat,geo.lon); clearMap('e');
     circleE=L.circle([geo.lat,geo.lon],{radius:parseInt(radius),color:'#1D9E75',fillColor:'#1D9E75',fillOpacity:0.07,weight:1.5}).addTo(map);
     L.marker([geo.lat,geo.lon],{icon:L.divIcon({className:'',html:'<div style="width:12px;height:12px;border-radius:50%;background:#1D9E75;border:2px solid white;"></div>',iconSize:[12,12],iconAnchor:[6,6]})}).addTo(map);
-    const els=await fetchWithEmail(geo.lat,geo.lon,radius);
-    prospectsE=els.map(el=>parseElement(el,geo)).filter(p=>p&&p.email);
-    // Dédoublonnage
+    const els=await fetchWithEmail(geo.lat,geo.lon,radius,city);
+    prospectsE=els.filter(p=>p&&p.lat&&p.lon&&p.email);
+    // Calcul distance et dédoublonnage
+    prospectsE.forEach(p=>p.dist=haversine(geo.lat,geo.lon,p.lat,p.lon));
     const seen=new Set();
-    prospectsE=prospectsE.filter(p=>{const k=`${p.name}|${p.lat.toFixed(5)}|${p.lon.toFixed(5)}`;if(seen.has(k))return false;seen.add(k);return true;});
+    prospectsE=prospectsE.filter(p=>{const k=`${p.name}|${p.lat.toFixed(4)}|${p.lon.toFixed(4)}`;if(seen.has(k))return false;seen.add(k);return true;});
     prospectsE.sort((a,b)=>b.scores.total-a.scores.total);
     prospectsE.forEach((p,i)=>{p._idx=i; p.checked=false;
       const m=L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:`<div style="width:9px;height:9px;border-radius:50%;background:${scoreColor(p.scores.total)};border:1.5px solid white;cursor:pointer;"></div>`,iconSize:[9,9],iconAnchor:[4,4]})});
