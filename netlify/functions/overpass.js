@@ -1,4 +1,5 @@
 // netlify/functions/overpass.js
+// UNE seule requête Overpass via bbox (plus rapide que "around")
 
 const SERVERS = [
   'https://overpass-api.de/api/interpreter',
@@ -10,77 +11,83 @@ const CACHE_TTL = 10 * 60 * 1000;
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-function makeQuery(lat, lon, radius, tag, withEmail) {
+// Calcule une bounding box autour d'un point
+function toBbox(lat, lon, radius) {
+  const R = 6371000;
+  const dLat = (radius / R) * (180 / Math.PI);
+  const dLon = dLat / Math.cos(lat * Math.PI / 180);
+  return {
+    minLat: lat - dLat, maxLat: lat + dLat,
+    minLon: lon - dLon, maxLon: lon + dLon,
+  };
+}
+
+// UNE seule requête, tous les tags, bbox au lieu de around
+function makeQuery(lat, lon, radius, withEmail) {
   const r = Math.min(parseInt(radius), 2000);
+  const { minLat, maxLat, minLon, maxLon } = toBbox(lat, lon, r);
+  const bb = minLat + ',' + minLon + ',' + maxLat + ',' + maxLon;
   const ef = withEmail ? '["email"]' : '';
   return (
-    '[out:json][timeout:8];' +
+    '[out:json][timeout:8][bbox:' + bb + '];' +
     '(' +
-    'node["' + tag + '"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
-    'way["' + tag + '"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
+    'node["amenity"]["name"]' + ef + ';' +
+    'way["amenity"]["name"]' + ef + ';' +
+    'node["shop"]["name"]' + ef + ';' +
+    'way["shop"]["name"]' + ef + ';' +
+    'node["leisure"]["name"]' + ef + ';' +
+    'way["leisure"]["name"]' + ef + ';' +
     ');' +
-    'out center tags qt 500;'
+    'out center tags qt 800;'
   );
 }
 
-async function fetchOne(query, tag) {
+async function fetchOverpass(query) {
   const cached = cache.get(query);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
-    console.log('[overpass] cache hit for', tag);
+    console.log('[overpass] cache hit, elements:', cached.data.length);
     return cached.data;
   }
 
-  for (const server of SERVERS) {
+  for (let i = 0; i < SERVERS.length; i++) {
+    const server = SERVERS[i];
     try {
-      console.log('[overpass] fetching tag=' + tag + ' from ' + server);
+      console.log('[overpass] trying', server);
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 7000);
+      const timer = setTimeout(() => controller.abort(), 7500);
 
-      // Pas de Content-Type — laisser fetch définir multipart/form-data
-      // User-Agent identifie l'app pour Overpass
-      const formBody = 'data=' + encodeURIComponent(query);
       const resp = await fetch(server, {
         method: 'POST',
-        headers: {
-          'User-Agent': 'MoodstreamAI/1.0 (prospection@moodstreamai.com)',
-        },
-        body: formBody,
+        headers: { 'User-Agent': 'MoodstreamAI/1.0' },
+        body: 'data=' + encodeURIComponent(query),
         signal: controller.signal,
       });
       clearTimeout(timer);
 
-      console.log('[overpass] tag=' + tag + ' status=' + resp.status);
+      console.log('[overpass] status', resp.status, 'from', server);
 
       if (resp.status === 429) {
-        console.log('[overpass] rate limited, waiting 1s...');
-        await sleep(1000);
-        continue;
+        if (i < SERVERS.length - 1) { await sleep(500); continue; }
+        return [];
       }
-      if (!resp.ok) {
-        console.log('[overpass] non-ok ' + resp.status + ', trying next server');
-        continue;
-      }
+      if (!resp.ok) { continue; }
 
       const text = await resp.text();
       if (!text.trim().startsWith('{')) {
-        console.log('[overpass] non-JSON response: ' + text.substring(0, 100));
+        console.log('[overpass] non-JSON:', text.substring(0, 80));
         continue;
       }
 
-      const json = JSON.parse(text);
-      const elements = json.elements || [];
-      console.log('[overpass] tag=' + tag + ' got ' + elements.length + ' elements');
-
+      const elements = JSON.parse(text).elements || [];
+      console.log('[overpass] got', elements.length, 'elements');
       cache.set(query, { ts: Date.now(), data: elements });
       return elements;
 
     } catch (e) {
-      console.log('[overpass] error tag=' + tag + ': ' + e.message);
+      console.log('[overpass] error:', e.message);
       continue;
     }
   }
-
-  console.log('[overpass] all servers failed for tag=' + tag);
   return [];
 }
 
@@ -95,29 +102,15 @@ exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
 
   try {
-    const body = JSON.parse(event.body || '{}');
-    const { lat, lon, radius, withEmail } = body;
+    const { lat, lon, radius, withEmail } = JSON.parse(event.body || '{}');
     if (!lat || !lon || !radius) return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing lat/lon/radius' }) };
 
-    let allElements = [];
-    for (const tag of ['amenity', 'shop', 'leisure']) {
-      const q = makeQuery(lat, lon, radius, tag, withEmail);
-      const els = await fetchOne(q, tag);
-      allElements = allElements.concat(els);
-      // Petite pause entre requêtes pour éviter le rate-limit
-      await sleep(300);
-    }
+    console.log('[overpass] request lat=' + lat + ' lon=' + lon + ' radius=' + radius + ' withEmail=' + withEmail);
 
-    const seen = new Set();
-    allElements = allElements.filter(el => {
-      const k = el.type + el.id;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
+    const elements = await fetchOverpass(makeQuery(lat, lon, radius, withEmail));
+    console.log('[overpass] returning', elements.length, 'elements');
 
-    console.log('[overpass] total:', allElements.length);
-    return { statusCode: 200, headers, body: JSON.stringify({ elements: allElements }) };
+    return { statusCode: 200, headers, body: JSON.stringify({ elements }) };
 
   } catch (e) {
     console.error('[overpass] handler error:', e.message);
