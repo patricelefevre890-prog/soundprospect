@@ -1,119 +1,93 @@
 // netlify/functions/overpass.js
-// Proxy Overpass API — évite les timeouts/rate-limits côté navigateur
-// Déposer dans : netlify/functions/overpass.js
+// Proxy Overpass — 3 micro-requêtes séquentielles, chacune < 3s
+// Compatible plan Netlify gratuit (timeout 10s)
 
 const SERVERS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 
-// Cache mémoire simple (durée de vie du process Netlify, ~10 min)
+// Cache mémoire (dure tant que le process Netlify tourne, ~10 min)
 const cache = new Map();
-const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const CACHE_TTL = 10 * 60 * 1000;
 
-async function queryOverpass(query) {
-  // Vérifier le cache
-  const cacheKey = query;
-  const cached = cache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) {
-    console.log('[overpass] cache hit');
-    return cached.data;
-  }
+// Construit une requête ciblée sur UN seul tag, résultats limités
+function makeQuery(lat, lon, radius, tag, withEmail) {
+  const r = Math.min(parseInt(radius), 2000); // cap 2km par micro-requête
+  const ef = withEmail ? '["email"]' : '';
+  return (
+    '[out:json][timeout:8];' +
+    '(' +
+    'node["' + tag + '"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
+    'way["' + tag + '"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
+    ');' +
+    'out center tags qt 500;'
+  );
+}
 
-  let lastError;
+async function fetchOne(query) {
+  const cached = cache.get(query);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
+
   for (const server of SERVERS) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        console.log(`[overpass] trying ${server} (attempt ${attempt + 1})`);
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 55000); // 55s max
-
-        const resp = await fetch(server, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'data=' + encodeURIComponent(query),
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-
-        if (resp.status === 429) {
-          // Rate limited — attendre 2s avant de réessayer sur ce serveur
-          await new Promise(r => setTimeout(r, 2000));
-          continue;
-        }
-        if (resp.status === 504 || resp.status === 502) {
-          // Gateway timeout — passer au serveur suivant directement
-          break;
-        }
-        if (!resp.ok) {
-          lastError = new Error(`HTTP ${resp.status} from ${server}`);
-          break;
-        }
-
-        const text = await resp.text();
-        // Vérifier que c'est bien du JSON (pas une page d'erreur HTML)
-        if (!text.trim().startsWith('{')) {
-          lastError = new Error(`Non-JSON response from ${server}`);
-          break;
-        }
-
-        const json = JSON.parse(text);
-        const elements = json.elements || [];
-
-        // Mettre en cache
-        cache.set(cacheKey, { ts: Date.now(), data: elements });
-        console.log(`[overpass] success: ${elements.length} elements`);
-        return elements;
-
-      } catch (e) {
-        lastError = e;
-        if (e.name === 'AbortError') {
-          console.log(`[overpass] timeout on ${server}`);
-          break; // passer au serveur suivant
-        }
-        console.log(`[overpass] error on ${server}: ${e.message}`);
-      }
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 7000);
+      const resp = await fetch(server, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(query),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!resp.ok) continue;
+      const text = await resp.text();
+      if (!text.trim().startsWith('{')) continue;
+      const elements = JSON.parse(text).elements || [];
+      cache.set(query, { ts: Date.now(), data: elements });
+      return elements;
+    } catch (e) {
+      continue;
     }
   }
-
-  throw lastError || new Error('All Overpass servers failed');
+  return [];
 }
 
 exports.handler = async (event) => {
-  // CORS
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Content-Type': 'application/json',
   };
 
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' };
-  }
-
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
-  }
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
+  if (event.httpMethod !== 'POST') return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
 
   try {
-    const { query } = JSON.parse(event.body || '{}');
-    if (!query) {
-      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing query' }) };
+    const { lat, lon, radius, withEmail } = JSON.parse(event.body || '{}');
+    if (!lat || !lon || !radius) return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing lat/lon/radius' }) };
+
+    // 3 micro-requêtes séquentielles : amenity, shop, leisure
+    let allElements = [];
+    for (const tag of ['amenity', 'shop', 'leisure']) {
+      const els = await fetchOne(makeQuery(lat, lon, radius, tag, withEmail));
+      allElements = allElements.concat(els);
     }
 
-    const elements = await queryOverpass(query);
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({ elements }),
-    };
+    // Dédoublonnage par id OSM
+    const seen = new Set();
+    allElements = allElements.filter(el => {
+      const k = el.type + el.id;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+
+    console.log('[overpass] total:', allElements.length);
+    return { statusCode: 200, headers, body: JSON.stringify({ elements: allElements }) };
+
   } catch (e) {
-    console.error('[overpass] handler error:', e.message);
-    return {
-      statusCode: 503,
-      headers,
-      body: JSON.stringify({ error: e.message }),
-    };
+    console.error('[overpass] error:', e.message);
+    return { statusCode: 503, headers, body: JSON.stringify({ error: e.message }) };
   }
 };
