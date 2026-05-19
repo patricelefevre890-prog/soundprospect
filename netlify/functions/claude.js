@@ -61,15 +61,36 @@ Donne minimum 15 établissements réels avec leurs vraies coordonnées GPS.`;
     // ── ACTION : EMAIL ───────────────────────────────────────────────────────
     if (action === 'email') {
       const { prospect } = data;
-      const type = prospect.type || prospect.amenity || prospect.shop || 'établissement';
+      const rawType = prospect.type || prospect.amenity || prospect.shop || '';
+      const typeLabels = {
+        bar:'bar', pub:'pub', restaurant:'restaurant', cafe:'café', nightclub:'boîte de nuit',
+        fast_food:'restaurant fast-food', ice_cream:'glacier', food_court:'food court', biergarten:'brasserie',
+        hotel:'hôtel', hostel:'auberge de jeunesse', guest_house:"chambre d'hôte", motel:'motel',
+        hairdresser:'salon de coiffure', beauty:'institut de beauté', nail_salon:'salon de nail art',
+        spa:'spa', massage:'institut de massage',
+        fitness:'salle de fitness', gym:'salle de sport', sports_centre:'centre sportif', yoga:'studio de yoga',
+        doctors:'cabinet médical', dentist:'cabinet dentaire', physiotherapist:'cabinet de kinésithérapie',
+        clinic:'clinique', veterinary:'cabinet vétérinaire', optician:"magasin d'optique",
+        pharmacy:'pharmacie',
+        supermarket:'supermarché', mall:'centre commercial', department_store:'grand magasin',
+        convenience:'épicerie', bakery:'boulangerie', butcher:'boucherie', deli:'traiteur',
+        greengrocer:'primeur', confectionery:'chocolaterie',
+        clothes:'magasin de vêtements', shoes:'magasin de chaussures', jewelry:'bijouterie',
+        furniture:"magasin de mobilier", florist:'fleuriste', garden_centre:'jardinerie',
+        cinema:'cinéma', theatre:'théâtre', museum:'musée', casino:'casino', escape_room:'escape room',
+        car_repair:'garage automobile', car_wash:'station de lavage',
+        laundry:'laverie', dry_cleaning:'pressing', travel_agency:'agence de voyage',
+        office:'bureau', bank:'banque', real_estate:'agence immobilière',
+      };
+      const type = typeLabels[rawType] || (rawType ? rawType.replace(/_/g,' ') : 'établissement');
       const name = prospect.name || 'votre établissement';
-      const prompt = `Rédige un email de prospection pour "${name}" (${type}) en adaptant UNIQUEMENT les parties [entre crochets] de ce texte exact. Ne change rien d'autre :
+      const prompt = `Rédige un email de prospection pour "${name}" en adaptant UNIQUEMENT les parties [entre crochets] de ce texte exact. Ne change rien d'autre :
 
 Bonjour,
 
 Je me permets de vous contacter au sujet de la diffusion musicale dans votre établissement. Je m'appelle Arnaud, je suis le fondateur de Moodstream.ai, une solution belge de gestion et diffusion musicale pour les commerces.
 
-J'imagine que vous diffusez de la musique dans votre espace. L'ambiance sonore est vraiment importante pour vos clients et pour l'image de [votre ${type}]. Le problème, c'est que les coûts liés à UNISONO et aux sociétés de gestion collective peuvent représenter une vraie charge financière.
+J'imagine que vous diffusez de la musique dans votre espace. L'ambiance sonore est vraiment importante pour vos clients et pour l'image de votre [${type}]. Le problème, c'est que les coûts liés à UNISONO et aux sociétés de gestion collective peuvent représenter une vraie charge financière.
 
 Moodstream.ai est un logiciel de diffusion et gestion musicale qui change la donne. Vous pouvez créer un horaire de diffusion précis pour chaque jour de la semaine, avec une ambiance qui change automatiquement selon les moments de la journée. Notre équipe peut créer cet horaire gratuitement avec vous, ou vous pouvez utiliser notre IA de conseil, ou simplement le faire en toute autonomie. Vous pouvez même ajouter des annonces vocales personnalisées.
 
