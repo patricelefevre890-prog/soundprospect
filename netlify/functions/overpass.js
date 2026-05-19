@@ -1,19 +1,15 @@
 // netlify/functions/overpass.js
-// Proxy Overpass — 3 micro-requêtes séquentielles, chacune < 3s
-// Compatible plan Netlify gratuit (timeout 10s)
 
 const SERVERS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
 ];
 
-// Cache mémoire (dure tant que le process Netlify tourne, ~10 min)
 const cache = new Map();
 const CACHE_TTL = 10 * 60 * 1000;
 
-// Construit une requête ciblée sur UN seul tag, résultats limités
 function makeQuery(lat, lon, radius, tag, withEmail) {
-  const r = Math.min(parseInt(radius), 2000); // cap 2km par micro-requête
+  const r = Math.min(parseInt(radius), 2000);
   const ef = withEmail ? '["email"]' : '';
   return (
     '[out:json][timeout:8];' +
@@ -25,14 +21,19 @@ function makeQuery(lat, lon, radius, tag, withEmail) {
   );
 }
 
-async function fetchOne(query) {
+async function fetchOne(query, tag) {
   const cached = cache.get(query);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
+  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    console.log('[overpass] cache hit for', tag);
+    return cached.data;
+  }
 
   for (const server of SERVERS) {
     try {
+      console.log('[overpass] fetching tag=' + tag + ' from ' + server);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 7000);
+
       const resp = await fetch(server, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -40,16 +41,36 @@ async function fetchOne(query) {
         signal: controller.signal,
       });
       clearTimeout(timer);
-      if (!resp.ok) continue;
+
+      console.log('[overpass] tag=' + tag + ' status=' + resp.status + ' server=' + server);
+
+      if (!resp.ok) {
+        console.log('[overpass] non-ok, skipping server');
+        continue;
+      }
+
       const text = await resp.text();
-      if (!text.trim().startsWith('{')) continue;
-      const elements = JSON.parse(text).elements || [];
+      console.log('[overpass] tag=' + tag + ' response length=' + text.length + ' starts=' + text.trim().substring(0, 30));
+
+      if (!text.trim().startsWith('{')) {
+        console.log('[overpass] non-JSON response, skipping');
+        continue;
+      }
+
+      const json = JSON.parse(text);
+      const elements = json.elements || [];
+      console.log('[overpass] tag=' + tag + ' got ' + elements.length + ' elements');
+
       cache.set(query, { ts: Date.now(), data: elements });
       return elements;
+
     } catch (e) {
+      console.log('[overpass] error tag=' + tag + ' server=' + server + ' err=' + e.message);
       continue;
     }
   }
+
+  console.log('[overpass] all servers failed for tag=' + tag);
   return [];
 }
 
@@ -64,17 +85,23 @@ exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, headers, body: JSON.stringify({ error: 'Method not allowed' }) };
 
   try {
-    const { lat, lon, radius, withEmail } = JSON.parse(event.body || '{}');
-    if (!lat || !lon || !radius) return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing lat/lon/radius' }) };
+    const body = JSON.parse(event.body || '{}');
+    console.log('[overpass] received:', JSON.stringify(body));
 
-    // 3 micro-requêtes séquentielles : amenity, shop, leisure
+    const { lat, lon, radius, withEmail } = body;
+    if (!lat || !lon || !radius) {
+      console.log('[overpass] missing params');
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing lat/lon/radius' }) };
+    }
+
     let allElements = [];
     for (const tag of ['amenity', 'shop', 'leisure']) {
-      const els = await fetchOne(makeQuery(lat, lon, radius, tag, withEmail));
+      const q = makeQuery(lat, lon, radius, tag, withEmail);
+      console.log('[overpass] query for ' + tag + ':', q.substring(0, 100));
+      const els = await fetchOne(q, tag);
       allElements = allElements.concat(els);
     }
 
-    // Dédoublonnage par id OSM
     const seen = new Set();
     allElements = allElements.filter(el => {
       const k = el.type + el.id;
@@ -87,7 +114,7 @@ exports.handler = async (event) => {
     return { statusCode: 200, headers, body: JSON.stringify({ elements: allElements }) };
 
   } catch (e) {
-    console.error('[overpass] error:', e.message);
+    console.error('[overpass] handler error:', e.message);
     return { statusCode: 503, headers, body: JSON.stringify({ error: e.message }) };
   }
 };
