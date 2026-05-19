@@ -84,13 +84,11 @@ Donne minimum 15 établissements réels avec leurs vraies coordonnées GPS.`;
       };
       const type = typeLabels[rawType] || (rawType ? rawType.replace(/_/g,' ') : 'établissement');
       const name = prospect.name || 'votre établissement';
-      const prompt = `Rédige un email de prospection pour "${name}" en adaptant UNIQUEMENT les parties [entre crochets] de ce texte exact. Ne change rien d'autre :
-
-Bonjour,
+      const corps = `Bonjour,
 
 Je me permets de vous contacter au sujet de la diffusion musicale dans votre établissement. Je m'appelle Arnaud, je suis le fondateur de Moodstream.ai, une solution belge de gestion et diffusion musicale pour les commerces.
 
-J'imagine que vous diffusez de la musique dans votre espace. L'ambiance sonore est vraiment importante pour vos clients et pour l'image de votre [${type}]. Le problème, c'est que les coûts liés à UNISONO et aux sociétés de gestion collective peuvent représenter une vraie charge financière.
+J'imagine que vous diffusez de la musique dans votre espace. L'ambiance sonore est vraiment importante pour vos clients et pour l'image de votre ${type}. Le problème, c'est que les coûts liés à UNISONO et aux sociétés de gestion collective peuvent représenter une vraie charge financière.
 
 Moodstream.ai est un logiciel de diffusion et gestion musicale qui change la donne. Vous pouvez créer un horaire de diffusion précis pour chaque jour de la semaine, avec une ambiance qui change automatiquement selon les moments de la journée. Notre équipe peut créer cet horaire gratuitement avec vous, ou vous pouvez utiliser notre IA de conseil, ou simplement le faire en toute autonomie. Vous pouvez même ajouter des annonces vocales personnalisées.
 
@@ -98,21 +96,23 @@ Le meilleur ? Nos musiques sont 100% libres de toute redevance aux sociétés de
 
 Je vous propose un essai gratuit de 14 jours sans engagement. Vous pouvez demander un devis sur https://www.moodstreamai.com/demande-de-devis ou simplement me répondre si vous avez des questions.
 
-Cordialement
+Cordialement`;
 
-Retourne UNIQUEMENT ce JSON sans texte avant ni après, sans signature :
-{"objet":"[objet court et accrocheur adapté au type d'établissement]","corps":"[le texte complet de l'email]"}`;
+      const prompt = `Génère uniquement l'objet de cet email de prospection pour un "${type}" nommé "${name}". L'objet doit être court, accrocheur, en français.
+Retourne UNIQUEMENT ce JSON sans texte avant ni après :
+{"objet":"..."}`;
 
       const response = await callAnthropic({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1000,
+        max_tokens: 100,
         messages: [{ role: 'user', content: prompt }],
       });
 
       const text = (response.content || []).find(b => b.type === 'text')?.text || '';
       const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('Pas de JSON email: ' + text.substring(0, 200));
-      return { statusCode: 200, headers, body: jsonMatch[0] };
+      let objet = jsonMatch ? JSON.parse(jsonMatch[0]).objet : 'Moodstream.ai — Diffusion musicale pour votre ' + type;
+      objet = objet.replace(/^\[|\]$/g, '').trim(); // retire les crochets si Claude en ajoute
+      return { statusCode: 200, headers, body: JSON.stringify({ objet, corps }) };
     }
 
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Unknown action: ' + action }) };
