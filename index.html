@@ -476,7 +476,7 @@ function openGmail(){
   const to=encodeURIComponent(document.getElementById('m-to').value||'');
   const subject=encodeURIComponent(document.getElementById('m-subject').value);
   const body=encodeURIComponent(document.getElementById('m-body').value);
-  window.open('https://mail.google.com/mail/u/info%40moodstreamai.com/?view=cm&fs=1&to='+to+'&su='+subject+'&body='+body,'_blank');
+  window.open('https://mail.google.com/mail/u/3/?view=cm&fs=1&to='+to+'&su='+subject+'&body='+body,'_blank');
 }
 
 function closeModal(){document.getElementById('email-overlay').classList.remove('open');currentProspect=null;}
@@ -495,7 +495,7 @@ async function createAllDrafts(){
       const r=await callClaude('email',{prospect:p});
       if(r?.objet&&r?.corps){
         const to=encodeURIComponent(p.email),su=encodeURIComponent(r.objet),body=encodeURIComponent(r.corps);
-        window.open('https://mail.google.com/mail/u/info%40moodstreamai.com/?view=cm&fs=1&to='+to+'&su='+su+'&body='+body,'_blank');
+        window.open('https://mail.google.com/mail/u/3/?view=cm&fs=1&to='+to+'&su='+su+'&body='+body,'_blank');
         await new Promise(res=>setTimeout(res,2000));
       }
     }catch(e){console.error(p.name,e);}
