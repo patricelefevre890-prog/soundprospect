@@ -432,53 +432,56 @@ async function geocode(city){
   return d.length?{lat:parseFloat(d[0].lat),lon:parseFloat(d[0].lon)}:null;
 }
 
-// ── SEARCH via Claude web_search ─────────────────────────────────────────────
+// ── Overpass direct depuis le navigateur — requête légère nodes only ──────────
 
-async function fetchAll(lat, lon, radius, city) {
-  const resp = await fetch('/.netlify/functions/claude', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'search', data: { city, radius, withEmail: false } }),
-  });
-  if (!resp.ok) throw new Error('Erreur serveur ' + resp.status);
-  const data = await resp.json();
-  // Convertir le format Claude → format interne
-  return (data.prospects || []).map(p => claudeToElement(p));
+const OVERPASS_SERVERS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
+
+async function overpassDirect(query) {
+  for (const server of OVERPASS_SERVERS) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 20000);
+      const resp = await fetch(server, {
+        method: 'POST',
+        body: 'data=' + encodeURIComponent(query),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!resp.ok) continue;
+      const text = await resp.text();
+      if (!text.trim().startsWith('{')) continue;
+      return JSON.parse(text).elements || [];
+    } catch(e) {
+      continue;
+    }
+  }
+  throw new Error('Serveurs Overpass indisponibles. Réessayez dans quelques secondes.');
 }
 
-async function fetchWithEmail(lat, lon, radius, city) {
-  const resp = await fetch('/.netlify/functions/claude', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'search', data: { city, radius, withEmail: true } }),
-  });
-  if (!resp.ok) throw new Error('Erreur serveur ' + resp.status);
-  const data = await resp.json();
-  return (data.prospects || []).filter(p => p.email).map(p => claudeToElement(p));
+function buildQuery(lat, lon, radius, withEmail) {
+  const r = Math.min(parseInt(radius), 2000);
+  const ef = withEmail ? '["email"]' : '';
+  // Nodes seulement (pas de way) — beaucoup plus rapide
+  return (
+    '[out:json][timeout:18];' +
+    '(' +
+    'node["amenity"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
+    'node["shop"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
+    'node["leisure"]["name"]' + ef + '(around:' + r + ',' + lat + ',' + lon + ');' +
+    ');' +
+    'out tags qt 300;'
+  );
 }
 
-function claudeToElement(p) {
-  // Convertit un prospect Claude au format parseElement
-  const amenity = p.type || '';
-  const shop = '';
-  const area = null;
-  const scores = computeScore(amenity, shop, area);
-  return {
-    lat: parseFloat(p.lat) || 0,
-    lon: parseFloat(p.lon) || 0,
-    name: p.name || '',
-    amenity,
-    shop,
-    area,
-    scores,
-    dist: 0, // sera calculé après
-    email: p.email || '',
-    phone: p.phone || '',
-    website: p.website || '',
-    address: p.address || '',
-    selected: false,
-    checked: false,
-  };
+async function fetchAll(lat, lon, radius) {
+  return overpassDirect(buildQuery(lat, lon, radius, false));
+}
+
+async function fetchWithEmail(lat, lon, radius) {
+  return overpassDirect(buildQuery(lat, lon, radius, true));
 }
 
 function parseElement(el, geo){
@@ -542,13 +545,11 @@ async function runAnalyse(){
     const map=getMap('a',geo.lat,geo.lon); clearMap('a');
     circleA=L.circle([geo.lat,geo.lon],{radius:parseInt(radius),color:'#1D9E75',fillColor:'#1D9E75',fillOpacity:0.07,weight:1.5}).addTo(map);
     L.marker([geo.lat,geo.lon],{icon:L.divIcon({className:'',html:'<div style="width:12px;height:12px;border-radius:50%;background:#1D9E75;border:2px solid white;"></div>',iconSize:[12,12],iconAnchor:[6,6]})}).addTo(map);
-    showLoad('a','Claude recherche les établissements...');
-    const els=await fetchAll(geo.lat,geo.lon,radius,city);
-    prospectsA=els.filter(p=>p&&p.lat&&p.lon);
-    // Calcul de la distance réelle et dédoublonnage
-    prospectsA.forEach(p=>p.dist=haversine(geo.lat,geo.lon,p.lat,p.lon));
-    const seen=new Set();
-    prospectsA=prospectsA.filter(p=>{const k=`${p.name}|${p.lat.toFixed(4)}|${p.lon.toFixed(4)}`;if(seen.has(k))return false;seen.add(k);return true;});
+    showLoad('a','Recherche des établissements...');
+    const els=await fetchAll(geo.lat,geo.lon,radius);
+    prospectsA=els.map(el=>parseElement(el,geo)).filter(Boolean);
+    const seenA=new Set();
+    prospectsA=prospectsA.filter(p=>{const k=p.name+'|'+p.lat.toFixed(4)+'|'+p.lon.toFixed(4);if(seenA.has(k))return false;seenA.add(k);return true;});
     prospectsA.sort((a,b)=>b.scores.total-a.scores.total);
     prospectsA.forEach((p,i)=>p._idx=i);
     prospectsA.forEach(p=>{
@@ -623,12 +624,10 @@ async function runEmail(){
     const map=getMap('e',geo.lat,geo.lon); clearMap('e');
     circleE=L.circle([geo.lat,geo.lon],{radius:parseInt(radius),color:'#1D9E75',fillColor:'#1D9E75',fillOpacity:0.07,weight:1.5}).addTo(map);
     L.marker([geo.lat,geo.lon],{icon:L.divIcon({className:'',html:'<div style="width:12px;height:12px;border-radius:50%;background:#1D9E75;border:2px solid white;"></div>',iconSize:[12,12],iconAnchor:[6,6]})}).addTo(map);
-    const els=await fetchWithEmail(geo.lat,geo.lon,radius,city);
-    prospectsE=els.filter(p=>p&&p.lat&&p.lon&&p.email);
-    // Calcul distance et dédoublonnage
-    prospectsE.forEach(p=>p.dist=haversine(geo.lat,geo.lon,p.lat,p.lon));
-    const seen=new Set();
-    prospectsE=prospectsE.filter(p=>{const k=`${p.name}|${p.lat.toFixed(4)}|${p.lon.toFixed(4)}`;if(seen.has(k))return false;seen.add(k);return true;});
+    const els=await fetchWithEmail(geo.lat,geo.lon,radius);
+    prospectsE=els.map(el=>parseElement(el,geo)).filter(p=>p&&p.email);
+    const seenE=new Set();
+    prospectsE=prospectsE.filter(p=>{const k=p.name+'|'+p.lat.toFixed(4)+'|'+p.lon.toFixed(4);if(seenE.has(k))return false;seenE.add(k);return true;});
     prospectsE.sort((a,b)=>b.scores.total-a.scores.total);
     prospectsE.forEach((p,i)=>{p._idx=i; p.checked=false;
       const m=L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:`<div style="width:9px;height:9px;border-radius:50%;background:${scoreColor(p.scores.total)};border:1.5px solid white;cursor:pointer;"></div>`,iconSize:[9,9],iconAnchor:[4,4]})});
