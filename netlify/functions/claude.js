@@ -63,23 +63,24 @@ Donne minimum 15 établissements réels avec leurs vraies coordonnées GPS.`;
       const { prospect } = data;
       const type = prospect.type || prospect.amenity || prospect.shop || 'établissement';
       const name = prospect.name || 'votre établissement';
-      const prompt = `Tu es Arnaud Gregoire, fondateur de Moodstream.ai. Rédige un email de prospection pour "${name}" (${type}).
+      const prompt = `Rédige un email de prospection pour "${name}" (${type}) en adaptant UNIQUEMENT les parties [entre crochets] de ce texte exact. Ne change rien d'autre :
 
-L'email doit suivre EXACTEMENT cette structure et ce ton :
+Bonjour,
 
-1. "Bonjour," (salutation simple)
-2. Phrase d'introduction : "Je me permets de vous contacter au sujet de la diffusion musicale dans votre établissement. Je m'appelle Arnaud, je suis le fondateur de Moodstream.ai, une solution belge de gestion et diffusion musicale pour les commerces."
-3. Phrase personnalisée sur l'importance de la musique pour ce type d'établissement (${type}) et le problème des coûts UNISONO/sociétés de gestion collective.
-4. Description de Moodstream.ai : logiciel de diffusion et gestion musicale, horaire précis par jour/moment, ambiance automatique, équipe disponible pour créer l'horaire gratuitement, IA de conseil, autonomie possible, annonces vocales personnalisées.
-5. "Le meilleur ? Nos musiques sont 100% libres de toute redevance aux sociétés de gestion collective. Ça vous permet de faire des économies drastiques."
-6. "Je vous propose un essai gratuit de 14 jours sans engagement. Vous pouvez demander un devis sur https://www.moodstreamai.com/demande-de-devis ou simplement me répondre si vous avez des questions."
-7. "Cordialement"
+Je me permets de vous contacter au sujet de la diffusion musicale dans votre établissement. Je m'appelle Arnaud, je suis le fondateur de Moodstream.ai, une solution belge de gestion et diffusion musicale pour les commerces.
 
-IMPORTANT : Ne mets PAS de signature (pas de nom, pas de titre, pas de coordonnées) à la fin — elle sera ajoutée automatiquement.
-Ton : chaleureux, direct, personnel. Longueur : 150-200 mots. Langue : français uniquement.
+J'imagine que vous diffusez de la musique dans votre espace. L'ambiance sonore est vraiment importante pour vos clients et pour l'image de [votre ${type}]. Le problème, c'est que les coûts liés à UNISONO et aux sociétés de gestion collective peuvent représenter une vraie charge financière.
 
-Retourne UNIQUEMENT ce JSON sans texte avant ni après :
-{"objet":"...","corps":"..."}`;
+Moodstream.ai est un logiciel de diffusion et gestion musicale qui change la donne. Vous pouvez créer un horaire de diffusion précis pour chaque jour de la semaine, avec une ambiance qui change automatiquement selon les moments de la journée. Notre équipe peut créer cet horaire gratuitement avec vous, ou vous pouvez utiliser notre IA de conseil, ou simplement le faire en toute autonomie. Vous pouvez même ajouter des annonces vocales personnalisées.
+
+Le meilleur ? Nos musiques sont 100% libres de toute redevance aux sociétés de gestion collective. Ça vous permet de faire des économies drastiques.
+
+Je vous propose un essai gratuit de 14 jours sans engagement. Vous pouvez demander un devis sur https://www.moodstreamai.com/demande-de-devis ou simplement me répondre si vous avez des questions.
+
+Cordialement
+
+Retourne UNIQUEMENT ce JSON sans texte avant ni après, sans signature :
+{"objet":"[objet court et accrocheur adapté au type d'établissement]","corps":"[le texte complet de l'email]"}`;
 
       const response = await callAnthropic({
         model: 'claude-haiku-4-5-20251001',
