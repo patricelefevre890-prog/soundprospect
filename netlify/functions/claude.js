@@ -82,7 +82,7 @@ Donne minimum 15 établissements réels avec leurs vraies coordonnées GPS.`;
         laundry:'laverie', dry_cleaning:'pressing', travel_agency:'agence de voyage',
         office:'bureau', bank:'banque', real_estate:'agence immobilière',
       };
-      const type = typeLabels[rawType] || (rawType ? rawType.replace(/_/g,' ') : 'établissement');
+      const type = typeLabels[rawType] || 'établissement';
       const name = prospect.name || 'votre établissement';
       const typeNaturel = type;
 
