@@ -96,7 +96,7 @@ Moodstream.ai est un logiciel de diffusion et gestion musicale qui change la don
 
 Le meilleur ? Nos musiques sont 100% libres de toute redevance aux sociétés de gestion collective. Ça vous permet de faire des économies drastiques.
 
-Je vous propose un essai gratuit de 14 jours sans engagement. Vous pouvez demander un devis sur https://www.moodstreamai.com/demande-de-devis ou simplement me répondre si vous avez des questions.
+Je vous propose un essai gratuit de 14 jours sans engagement via https://www.moodstreamai.com. Vous pouvez demander un devis sur https://www.moodstreamai.com/demande-de-devis ou simplement me répondre si vous avez des questions.
 
 Cordialement`;
 
