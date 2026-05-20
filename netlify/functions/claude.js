@@ -73,7 +73,7 @@ Donne minimum 15 établissements réels avec leurs vraies coordonnées GPS.`;
         clinic:'clinique', veterinary:'cabinet vétérinaire', optician:"magasin d'optique",
         pharmacy:'pharmacie',
         supermarket:'supermarché', mall:'centre commercial', department_store:'grand magasin',
-        convenience:'épicerie', bakery:'boulangerie', butcher:'boucherie', deli:'traiteur',
+        convenience:'épicerie', bakery:'boulangerie', butcher:'boucherie', deli:'épicerie fine',
         greengrocer:'primeur', confectionery:'chocolaterie',
         clothes:'magasin de vêtements', shoes:'magasin de chaussures', jewelry:'bijouterie',
         furniture:"magasin de mobilier", florist:'fleuriste', garden_centre:'jardinerie',
@@ -84,10 +84,7 @@ Donne minimum 15 établissements réels avec leurs vraies coordonnées GPS.`;
       };
       const type = typeLabels[rawType] || (rawType ? rawType.replace(/_/g,' ') : 'établissement');
       const name = prospect.name || 'votre établissement';
-      // On demande à Claude de trouver le bon terme naturel pour ce type d'établissement
-      const prompt2 = `Quel est le terme naturel en français pour désigner "${name}" qui est catégorisé comme "${type}" ? Réponds avec UN seul mot ou groupe de mots court (ex: "épicerie fine", "boulangerie", "salon de coiffure", "restaurant"). Si tu ne sais pas, réponds "établissement". Réponds UNIQUEMENT le terme, sans ponctuation ni explication.`;
-      const resp2 = await callAnthropic({ model: 'claude-haiku-4-5-20251001', max_tokens: 20, messages: [{ role: 'user', content: prompt2 }] });
-      const typeNaturel = (resp2.content || []).find(b => b.type === 'text')?.text?.trim().replace(/[".]/g,'') || type;
+      const typeNaturel = type;
 
       const corps = `Bonjour,
 
