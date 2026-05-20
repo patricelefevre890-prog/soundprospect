@@ -84,11 +84,16 @@ Donne minimum 15 établissements réels avec leurs vraies coordonnées GPS.`;
       };
       const type = typeLabels[rawType] || (rawType ? rawType.replace(/_/g,' ') : 'établissement');
       const name = prospect.name || 'votre établissement';
+      // On demande à Claude de trouver le bon terme naturel pour ce type d'établissement
+      const prompt2 = `Quel est le terme naturel en français pour désigner "${name}" qui est catégorisé comme "${type}" ? Réponds avec UN seul mot ou groupe de mots court (ex: "épicerie fine", "boulangerie", "salon de coiffure", "restaurant"). Si tu ne sais pas, réponds "établissement". Réponds UNIQUEMENT le terme, sans ponctuation ni explication.`;
+      const resp2 = await callAnthropic({ model: 'claude-haiku-4-5-20251001', max_tokens: 20, messages: [{ role: 'user', content: prompt2 }] });
+      const typeNaturel = (resp2.content || []).find(b => b.type === 'text')?.text?.trim().replace(/[".]/g,'') || type;
+
       const corps = `Bonjour,
 
 Je me permets de vous contacter au sujet de la diffusion musicale dans votre établissement. Je m'appelle Arnaud, je suis le fondateur de Moodstream.ai, une solution belge de gestion et diffusion musicale pour les commerces.
 
-J'imagine que vous diffusez de la musique dans votre espace. L'ambiance sonore est vraiment importante pour vos clients et pour l'image de votre ${type}. Le problème, c'est que les coûts liés à UNISONO et aux sociétés de gestion collective peuvent représenter une vraie charge financière.
+J'imagine que vous diffusez de la musique dans votre espace. L'ambiance sonore est vraiment importante pour vos clients et pour l'image de votre ${typeNaturel}. Le problème, c'est que les coûts liés à UNISONO et aux sociétés de gestion collective peuvent représenter une vraie charge financière.
 
 Moodstream.ai est un logiciel de diffusion et gestion musicale qui change la donne. Vous pouvez créer un horaire de diffusion précis pour chaque jour de la semaine, avec une ambiance qui change automatiquement selon les moments de la journée. Notre équipe peut créer cet horaire gratuitement avec vous, ou vous pouvez utiliser notre IA de conseil, ou simplement le faire en toute autonomie. Vous pouvez même ajouter des annonces vocales personnalisées.
 
@@ -98,7 +103,10 @@ Je vous propose un essai gratuit de 14 jours sans engagement. Vous pouvez demand
 
 Cordialement`;
 
-      const prompt = `Génère uniquement l'objet de cet email de prospection pour un "${type}" nommé "${name}". L'objet doit être court, accrocheur, en français.
+      const prompt = `Tu envoies un email de prospection À "${name}" (un ${typeNaturel}), de la part de Moodstream.ai.
+Génère un objet d'email court (max 8 mots), en français, sur la musique ou l'ambiance sonore dans leur établissement.
+Exemples : "La musique dans votre ${typeNaturel}", "Moodstream.ai pour votre ${typeNaturel}"
+Ne fais pas de pub pour l'établissement, tu leur écris À eux.
 Retourne UNIQUEMENT ce JSON sans texte avant ni après :
 {"objet":"..."}`;
 
